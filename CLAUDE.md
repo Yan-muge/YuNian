@@ -12,11 +12,17 @@ YuNian (予念) is an Android AI companion app built with Kotlin and Jetpack Com
 # Debug build
 ./gradlew assembleDebug
 
-# Release build (requires release.keystore and env vars YUNIAN_STORE_PASSWORD / YUNIAN_KEY_PASSWORD)
-./gradlew assembleRelease
+# Release build (hardened, canonical path)
+python tools/build.py --release --skip-wb-aes
+# Bare ./gradlew assembleRelease works but produces UNHARDENED, non-shippable output.
+# Release requires release.keystore and env vars YUNIAN_STORE_PASSWORD / YUNIAN_KEY_PASSWORD.
 
 # Check module dependencies
 ./gradlew app:dependencies --configuration implementation
+
+# Run unit tests for a single module (or list several)
+./gradlew :core:common:testDebugUnitTest :core:network:testDebugUnitTest
+# Instrumentation tests are gated behind the `thinShellTestRunner` gradle property (see app/build.gradle.kts).
 
 # Clean build (required after core module changes that affect many dependents)
 ./gradlew clean assembleDebug
@@ -33,7 +39,7 @@ Gradle wrapper uses a Tencent mirror (`mirrors.cloud.tencent.com/gradle/gradle-9
   └─→ feature:* (automation, backup, chat, companion, groupchat, mcp, memory, notification, profile, qqbot, settings, skills, wechat, worldbook)
         └─→ core:* (agent, common, database, domain, network, security, ui-common, wechat)
 
-:shell  (JVM test module, isolated — not part of Android build)
+:shell  (JVM Kotlin module — plain Kotlin "class-structure reference" only, no tests, no dependents, not part of Android build)
 ```
 
 **Critical rules:**
@@ -71,11 +77,13 @@ Pass arguments via navigation path parameters, not global state.
 - Implements six-dimension defense: CPU security (NEON key residency, 5-level key system), memory guard (mprotect, anti-dump), bridge layer (zero-trust PDP/PEP, VMP engine, 32-point detection), Kotlin orchestration (audit logging, hardware attestation).
 - `ndkVersion = "30.0.14904198"` must match exactly between `app/build.gradle.kts` and `core/security/build.gradle.kts`.
 - Anti-debug, integrity verification, and RegisterNatives obfuscation are **ONLY** active in release builds.
+- **Thin-shell / Dex2C packaging runs by default on release builds.** `app/build.gradle.kts` defines `packageShellPayload`, `packageThinShellRelease` (enabled by default), and `promoteThinShellRelease`, wired via `finalizedBy`. Pass `-PyunianSkipThinShell=true` to disable. Use the `tools/build.py` release path rather than bare `assembleRelease` to get the hardened, shippable output.
 
 ### Database (`core:database`)
 
 - Room database, **current version 45**.
 - Entities are declared in the `@Database(entities = [...])` block of `AppDatabase.kt` (32 today) — **that block is the source of truth for both the version and the entity list**, so entities are not enumerated here. Representative entities: `CompanionEntity`, `ApiConfig`, `MemoryEntry`, `Message` / `MessageBody`, `AgentSkillEntity`, `WorldbookEntity`.
+- **Schema freeze in effect** (`SCHEMA_FROZEN_VERSION = 41` in `AppDatabase.kt`). New features must NOT add tables or columns; store new structured data via `AppMetaStore` (KV) or ExtJson fields on existing entities. The v44→v45 migration (10 Agent tables) was an approved freeze exception — do not treat it as precedent.
 
 ### Cross-Feature Communication (`core:domain`)
 
@@ -92,6 +100,20 @@ Pass arguments via navigation path parameters, not global state.
 - `feature:localmodel` **has been retired** (local inference is now handled entirely by the Rust Cordis Agent runtime shipped as `liblianyu_agent.so`). There is no LiteRT-LM / Gemma on-device path anymore.
 - `AgentDialogueCoordinator` (with `:core:agent`) is the sole owner of `ContentFilter` / `BanManager` / `ImageGenProtocol` for bridge paths.
 - Memory reads/writes go through `core:domain`'s `MemoryProvider` (impl: `UnifiedMemoryProvider`).
+
+### Plugin System (Cordis Plugins)
+
+The Cordis plugin system is the extensibility layer — recent feature work (e.g. `chat.first_person_reasoning`, `ui.assists`) lands here. Structure:
+
+- **Contract**: `core:domain/.../plugin/Plugin.kt` defines the plugin contract and descriptor (incl. `description` field).
+- **Host**: `core:agent/src/main/kotlin/com/yunian/ai/agent/plugin/PluginHostImpl.kt` (note: `src/main/kotlin/`, not `java/`). `AgentDialogueCoordinator` owns it for bridge paths.
+- **Built-in plugins**: `core/agent/.../plugin/` — `BuiltinChatSkillPlugin`, `MessageSendPlugin`, `StickerPreferencePlugin`, plus `PluginBlueprintParser` / `PluginBlueprintStatus`.
+- **Feature plugins**: live in their owning feature module — `feature/chat/.../plugin/FirstPersonReasoningPlugin.kt`, `feature/skills/.../plugin/AssistsUiPlugin.kt`, `feature/automation/AutomationPlugin`, `feature/qqbot/channel/QQBotChannelPlugin`, `feature/wechat/channel/WeChatChannelPlugin`.
+- **Blueprint = source of truth for what loads**: `app/src/main/assets/blueprints/default.json` enumerates enabled plugins (8 today). Wiring in `YuNianApplication.kt` (PluginHostImpl construction, channel registry, builtin registration, blueprint load, disablement overlay).
+- **Enablement overlay**: `PluginEnablementStore` (KV inside `AppMetaStore`) is **subtractive** — it only records *disabled* ids; everything in the blueprint is on by default.
+- **Settings UI**: `feature/settings/plugin/` and shared components in `core:ui-common/plugin/`.
+
+When adding a plugin: implement the contract in the relevant feature module, register it in `YuNianApplication.kt`, and add an entry to `blueprints/default.json`. Plugins must not depend on other feature modules — cross-feature needs go through `core:domain` contracts.
 
 ### UI (`core:ui-common`)
 
@@ -110,11 +132,12 @@ Pass arguments via navigation path parameters, not global state.
 
 - **compileSdk = 35**, **minSdk = 26**, **targetSdk = 35**
 - **Kotlin**: 2.2.10 (JVM toolchain 17)
-- **JDK**: 17 (project points to `D:\\and studio\\jbr` on Windows)
+- **JDK**: 17 — project pins Corretto 17.0.14 via `org.gradle.java.home` in `gradle.properties` (machine-specific path). Override per-machine with the `YUNIAN_GRADLE_JAVA_HOME` env var (e.g. pointing at `D:/Android Studio/jbr`) — the pin exists because VS Code's bundled JRE lacks `jlink.exe`.
 - **AGP**: 9.2.1
 - **Gradle**: 9.4.1
 - Release signing config expects `release.keystore` in the project root and environment variables `YUNIAN_STORE_PASSWORD` / `YUNIAN_KEY_PASSWORD`.
 - Version catalog is in `gradle/libs.versions.toml`.
+- Note: SDK versions (compileSdk/minSdk/targetSdk) are hardcoded in `app/build.gradle.kts`, not in the version catalog. `gradle.properties` sets `org.gradle.caching=false` (Windows file-lock avoidance) and `org.gradle.configuration-cache=false` (KSP/Room incompatibility) — do not "fix" these to `true`.
 
 ### Environment Constraints (Do Not Modify)
 
@@ -122,7 +145,7 @@ The following environment configurations are **owned by the repository and must 
 
 | Configuration | File | Rule |
 |---------------|------|------|
-| JDK path | `gradle.properties` (`org.gradle.java.home`) | Fixed to the project-provided JDK (`D:\and studio\jbr` on Windows). Do not point to system JDK or other installations. |
+| JDK path | `gradle.properties` (`org.gradle.java.home`) | Pinned to a Corretto 17 install (machine-specific). Override per-machine via the `YUNIAN_GRADLE_JAVA_HOME` env var. Do not point to system JDK or other installations. |
 | Gradle version | `gradle/wrapper/gradle-wrapper.properties` | Locked to the specified version. Do not upgrade or downgrade. |
 | Dependency versions | `gradle/libs.versions.toml` | Centralized version catalog only. Hardcoding versions in module `build.gradle.kts` files is prohibited. |
 | Maven mirrors | `settings.gradle.kts` | Use the configured Alibaba Cloud / Tencent mirrors. Do not change repositories. |

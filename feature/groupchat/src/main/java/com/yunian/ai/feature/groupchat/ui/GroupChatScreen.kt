@@ -126,6 +126,7 @@ import com.yunian.ai.uicommon.theme.rememberAdaptiveSizing
 import com.yunian.ai.uicommon.component.AppMessageAvatar
 import androidx.compose.foundation.layout.BoxWithConstraints
 import com.yunian.ai.database.model.Message as MetadataMessage
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import com.yunian.ai.uicommon.component.glass.ProvidePageBackdrop
 import com.yunian.ai.uicommon.component.glass.drawGlass
 import com.yunian.ai.uicommon.component.AppListItemLayout
@@ -387,8 +388,8 @@ fun GroupChatScreen(
 
         ProvidePageBackdrop(chatBackdrop) {
             CompositionLocalProvider(
-                LocalChatGlassBackdrop provides chatBackdrop,
-                LocalChatGlassEnabled provides (perfTier != HardwareInfo.Tier.LOW)
+                LocalChatGlassBackdrop provides if (GlassEffectGate.enabled) chatBackdrop else null,
+                LocalChatGlassEnabled provides (GlassEffectGate.enabled && perfTier != HardwareInfo.Tier.LOW)
             ) {
             SnackbarHost(
                 hostState = snackbarHostState,

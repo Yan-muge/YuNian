@@ -70,6 +70,7 @@ import com.yunian.ai.security.SecurityState
 import android.content.ComponentCallbacks2
 import com.yunian.ai.uicommon.component.ChatBackgroundCache
 import com.yunian.ai.uicommon.component.getChatBackgroundKey
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import coil.Coil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -211,6 +212,13 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
             // PageTransitions 在「转场起帧那一帧」读取 HardwareInfo.tier，若此时才首次探测会阻塞主线程；
             // 启动即后台预热后，首次导航只命中缓存。幂等，且不改变同设备档位。
             bgScope.launch { HardwareInfo.warmUp() }
+
+            // 液态玻璃开关：启动时从设置加载到 GlassEffectGate（默认关闭，读取完成前保持关闭）。
+            // 主题设置页切换时双写（AppSettingsStore + GlassEffectGate），此处只在进程启动时读一次。
+            bgScope.launch {
+                runCatching { GlassEffectGate.enabled = AppSettingsStore(app).getLiquidGlassEnabled() }
+                    .onFailure { SecureLog.e("YuNianApplication", "load liquidGlassEnabled failed", it) }
+            }
 
             bgScope.launch {
                 // ── 放行屏障（T01′）──────────────────────────────────────────────────────

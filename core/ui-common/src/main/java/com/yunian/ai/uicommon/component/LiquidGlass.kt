@@ -1,5 +1,6 @@
 package com.yunian.ai.uicommon.component
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
@@ -14,15 +15,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
+import com.yunian.ai.uicommon.component.glass.GlassFallbackDarkColor
+import com.yunian.ai.uicommon.component.glass.GlassFallbackLightColor
 import com.yunian.ai.uicommon.theme.GlassDarkBg
 import com.yunian.ai.uicommon.theme.GlassLightBg
 import com.yunian.ai.uicommon.theme.PinkPrimary
+
+/**
+ * 液态玻璃关闭（GlassEffectGate.enabled = false，默认）时的统一回退：
+ * 近不透明底色 + 原 shape，保证文字可读性与圆角一致。
+ */
+private fun Modifier.glassFallback(shape: Shape, isDark: Boolean): Modifier =
+    this.clip(shape).background(
+        color = if (isDark) GlassFallbackDarkColor else GlassFallbackLightColor,
+        shape = shape
+    )
 
 fun Modifier.liquidGlass(
     shape: Shape = RoundedCornerShape(16.dp),
     isDark: Boolean = false,
     intensity: Float = 1.0f
 ): Modifier {
+    if (!GlassEffectGate.enabled) return glassFallback(shape, isDark)
     return this
         .clip(shape)
         .glassBackground(isDark, intensity)
@@ -49,6 +64,7 @@ fun Modifier.frostedGlassNav(
     intensity: Float = 1.0f
 ): Modifier {
     val shape = RoundedCornerShape(26.dp)
+    if (!GlassEffectGate.enabled) return glassFallback(shape, isDark)
     return this
         .clip(shape)
         .navGlassBackground(isDark, intensity)
@@ -62,6 +78,7 @@ fun Modifier.liquidGlassPill(
     isDark: Boolean = false,
     intensity: Float = 1.0f
 ): Modifier {
+    if (!GlassEffectGate.enabled) return glassFallback(shape, isDark)
     return this
         .clip(shape)
         .pillGlassBackground(isDark, intensity)

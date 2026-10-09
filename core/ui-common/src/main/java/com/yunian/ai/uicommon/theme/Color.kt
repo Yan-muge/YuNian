@@ -34,14 +34,21 @@ val WeChatLightTextPrimary = Color(0xFF2A2440)
 val WeChatLightTextSecondary = Color(0xFF5E5678)
 val WeChatLightTextTertiary = Color(0xFF8A829A)
 
-val AiBubbleLight = PastelSky
-val AiBubbleDark = PastelSky
-val SelfBubbleLight = PastelLilac
-val SelfBubbleDark = PinkDark
-val AiBubbleBorderDark = PastelLavender.copy(alpha = 0.40f)
-val AiBubbleBorderLight = PastelLavender.copy(alpha = 0.28f)
+// ── 聊天气泡配色（微信风格：自己绿色、对方白色）──────────────────────────
+// 浅色 = 微信经典配色；深色 = 微信深色模式规范（暗绿 / 深灰底 + 浅色文字）。
+val AiBubbleLight = Color(0xFFFFFFFF)
+val AiBubbleDark = Color(0xFF2C2C2C)
+val SelfBubbleLight = Color(0xFF95EC69)
+val SelfBubbleDark = Color(0xFF3EB575)
+// 微信气泡无边框：回退路径不再画描边
+val AiBubbleBorderDark = Color.Transparent
+val AiBubbleBorderLight = Color.Transparent
 
-val BubbleOnPink = Color(0xFF2A2440)
+/** 气泡文字（浅色底）：近黑，微信正文用色 */
+val BubbleContentOnLight = Color(0xFF191919)
+
+/** 气泡文字（深色底）：浅白，微信深色正文用色 */
+val BubbleContentOnDark = Color(0xFFD5D5D5)
 
 val BubbleSkyBlue = PastelSky
 

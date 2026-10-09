@@ -110,6 +110,7 @@ import com.yunian.ai.uicommon.component.sticker.StickerImportOverlay
 import com.yunian.ai.uicommon.component.sticker.suggestStickerName
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import com.yunian.ai.uicommon.component.glass.ProvidePageBackdrop
 import com.yunian.ai.uicommon.component.VoiceRecorder
 import com.yunian.ai.uicommon.component.getChatBackgroundByKey
@@ -790,8 +791,8 @@ fun ChatScreen(
             // 气泡液态玻璃：backdrop + 低端机降级开关（LOW 档保持纯色气泡）；
             // 头像点击回调在此一次性 provide（T03：替代原先每条消息逐项包裹的 provider）。
             CompositionLocalProvider(
-                LocalChatGlassBackdrop provides chatBackdrop,
-                LocalChatGlassEnabled provides (perfTier != HardwareInfo.Tier.LOW),
+                LocalChatGlassBackdrop provides if (GlassEffectGate.enabled) chatBackdrop else null,
+                LocalChatGlassEnabled provides (GlassEffectGate.enabled && perfTier != HardwareInfo.Tier.LOW),
                 LocalCompanionAvatarClick provides companionAvatarClick,
                 LocalUserAvatarClick provides userAvatarClick
             ) {

@@ -67,6 +67,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.yunian.ai.common.HardwareInfo
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import com.yunian.ai.uicommon.component.glass.LocalPageBackdrop
 import com.yunian.ai.uicommon.component.glass.drawGlass
 import com.yunian.ai.uicommon.component.jellyEntrance
@@ -248,8 +249,9 @@ fun StickerImportOverlay(
         ) {
             // 全屏 Apple Intelligence 式边缘雾光（先声明 → 绘制在卡片之下，不遮挡内容）
             if (active) {
-                if (mistSupportsRealBlur) {
+                if (mistSupportsRealBlur && GlassEffectGate.enabled) {
                     // 真·雾层：宽多色光带经 GPU blur 整层模糊 → 连续弥散，无环带痕迹
+                    // （液态玻璃全局开关关闭时走 legacy 描边近似，不再做 GPU blur）
                     Canvas(
                         modifier = Modifier
                             .matchParentSize()

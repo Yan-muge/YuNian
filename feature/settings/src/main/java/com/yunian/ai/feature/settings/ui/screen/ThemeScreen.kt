@@ -49,6 +49,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yunian.ai.uicommon.theme.ThemeViewModel
 import com.yunian.ai.uicommon.theme.ThemeMode
 import androidx.compose.foundation.isSystemInDarkTheme
+import com.yunian.ai.common.AppSettingsStore
+import com.yunian.ai.uicommon.component.glass.GlassEffectGate
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -141,7 +147,84 @@ fun ThemeScreen(
                     }
                 }
             )
+
+            GlassEffectCard(
+                cardColor = cardColor,
+                textPrimaryColor = textPrimaryColor,
+                dividerColor = dividerColor
+            )
         }
+    }
+}
+
+/**
+ * 液态玻璃效果开关（[GlassEffectGate]，默认关闭）。
+ *
+ * 双写：持久化到 [AppSettingsStore]（下次启动由 Application 同步加载）+ 直接写
+ * [GlassEffectGate]（本次会话即时全局生效，无需重启）。
+ * 硬件分级的 LOW 档强制禁用在各消费点（如聊天页 LocalChatGlassEnabled）做 AND 合成，
+ * 本开关只承载用户语义。
+ */
+@Composable
+private fun GlassEffectCard(
+    cardColor: Color,
+    textPrimaryColor: Color,
+    dividerColor: Color
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val settingsStore = remember {
+        AppSettingsStore(context.applicationContext)
+    }
+    val glassEnabled = GlassEffectGate.enabled
+    val shape = RoundedCornerShape(12.dp)
+    val surfaceColor = if (glassEnabled) cardColor.copy(alpha = 0.85f) else cardColor
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawGlass(
+                backdrop = LocalPageBackdrop.current,
+                shape = shape,
+                surfaceColor = surfaceColor
+            )
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = AppIcons.Settings2,
+            contentDescription = null,
+            tint = textPrimaryColor,
+            modifier = Modifier.size(26.dp)
+        )
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.glass_effect_title),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp
+                ),
+                color = textPrimaryColor
+            )
+            Text(
+                text = stringResource(R.string.glass_effect_subtitle),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 12.sp
+                ),
+                color = dividerColor
+            )
+        }
+
+        Switch(
+            checked = glassEnabled,
+            onCheckedChange = { checked ->
+                GlassEffectGate.enabled = checked
+                scope.launch { settingsStore.setLiquidGlassEnabled(checked) }
+            }
+        )
     }
 }
 

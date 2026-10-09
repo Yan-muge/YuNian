@@ -8,10 +8,16 @@ object AppColors {
 
     fun primaryBubbleBackground(colorScheme: ColorScheme): Color =
         if (isDarkSurface(colorScheme)) SelfBubbleDark else SelfBubbleLight
-    fun primaryBubbleContent(colorScheme: ColorScheme): Color = BubbleOnPink
+
+    /** 气泡文字分深浅：浅色气泡（绿/白）配近黑，深色气泡（暗绿/深灰）配浅白。 */
+    fun primaryBubbleContent(colorScheme: ColorScheme): Color =
+        if (isDarkSurface(colorScheme)) BubbleContentOnDark else BubbleContentOnLight
+
     fun secondaryBubbleBackground(colorScheme: ColorScheme): Color =
         if (isDarkSurface(colorScheme)) AiBubbleDark else AiBubbleLight
-    fun secondaryBubbleContent(colorScheme: ColorScheme): Color = BubbleOnPink
+
+    fun secondaryBubbleContent(colorScheme: ColorScheme): Color =
+        if (isDarkSurface(colorScheme)) BubbleContentOnDark else BubbleContentOnLight
     fun secondaryBubbleBorder(colorScheme: ColorScheme): Color =
         if (isDarkSurface(colorScheme)) AiBubbleBorderDark else AiBubbleBorderLight
 
