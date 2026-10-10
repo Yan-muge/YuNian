@@ -37,9 +37,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,12 +61,11 @@ import com.yunian.ai.uicommon.image.cropper.ImageCropperDialog
 import com.yunian.ai.uicommon.image.decodeUriSampledForCrop
 import com.yunian.ai.uicommon.image.viewer.FullscreenImageViewer
 import com.yunian.ai.uicommon.picker.ui.CustomImagePicker
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTab
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTabs
 import com.yunian.ai.uicommon.component.glass.GlassPageScaffold
 import com.yunian.ai.uicommon.component.glass.LocalPageBackdrop
 import com.yunian.ai.uicommon.component.glass.drawGlass
 import com.yunian.ai.uicommon.theme.AppTheme
+import com.yunian.ai.uicommon.theme.TabSelectedBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -539,60 +535,50 @@ private fun TargetToggleRow(
     selected: BgTarget,
     onSelect: (BgTarget) -> Unit
 ) {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val contentColor = if (isDark) Color.White else Color.Black
-    val selectedIndex = if (selected == BgTarget.Chat) 1 else 0
+    // 微信风格实底选择框（与首页底部导航栏、顶部 tab 同一套视觉）：
+    // 实底 surface 背景 + 选中项 C2BEF0 胶囊高亮，替代原液态玻璃胶囊（透明悬浮）。
+    val colorScheme = AppTheme.colors
+    val isDark = colorScheme.background.luminance() < 0.5f
+    val unselectedContent = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF8A829A)
+    val selectedContent = Color(0xFF191919)
+    val selectedBg = TabSelectedBackground
 
-    // 与首页底部导航栏同机制（FloatingGlassBottomNav）：视觉状态与业务状态分离
-    // 视觉先动（指示器立刻滑动），业务回调推迟到下一帧触发，避免两者同帧打架导致
-    // 「点击无效 + 被拖拽吸附拽回原位」
-    var visualIndex by remember { mutableIntStateOf(selectedIndex) }
-    var pendingIndex by remember { mutableStateOf<Int?>(null) }
-    val currentOnSelect by rememberUpdatedState(onSelect)
+    val tabs = listOf(
+        BgTarget.Main to "页面背景",
+        BgTarget.Chat to "聊天背景"
+    )
 
-    LaunchedEffect(selectedIndex) { visualIndex = selectedIndex }
-    LaunchedEffect(pendingIndex) {
-        val index = pendingIndex ?: return@LaunchedEffect
-        withFrameNanos {}
-        currentOnSelect(if (index == 1) BgTarget.Chat else BgTarget.Main)
-        if (pendingIndex == index) pendingIndex = null
-    }
-    val selectIndex: (Int) -> Unit = { index ->
-        if (index != visualIndex) {
-            visualIndex = index
-            pendingIndex = index
-        }
-    }
-
-    LiquidBottomTabs(
-        selectedTabIndex = { visualIndex },
-        onTabSelected = selectIndex,
-        backdrop = LocalPageBackdrop.current,
-        tabsCount = 2,
-        isDark = isDark,
-        containerHeight = 56.dp,
-        contentPadding = 4.dp,
-        showSelectionShadow = false,
-        // 二选一开关：调大拖拽阈值，单击绝不误触滑动；明确拖拽仍可切换
-        dragTouchSlopDp = 32.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(50))
+            .background(colorScheme.surface),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        LiquidBottomTab(onClick = { selectIndex(0) }) {
-            Text(
-                text = "页面背景",
-                fontSize = 14.sp,
-                fontWeight = if (visualIndex == 0) FontWeight.SemiBold else FontWeight.Normal,
-                color = contentColor,
-                maxLines = 1
-            )
-        }
-        LiquidBottomTab(onClick = { selectIndex(1) }) {
-            Text(
-                text = "聊天背景",
-                fontSize = 14.sp,
-                fontWeight = if (visualIndex == 1) FontWeight.SemiBold else FontWeight.Normal,
-                color = contentColor,
-                maxLines = 1
-            )
+        tabs.forEach { (target, label) ->
+            val isSelected = selected == target
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) selectedBg else Color.Transparent)
+                    .clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = { onSelect(target) }
+                    )
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 14.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isSelected) selectedContent else unselectedContent,
+                    maxLines = 1
+                )
+            }
         }
     }
 }

@@ -62,6 +62,30 @@ class ResponsePostProcessorTest {
     }
 
     @Test
+    fun strip_metaNarration_becomesBlank() {
+        // 症状 1 变体：第一人称思考插件下，模型把「等待/氛围/状态评估」这类旁观式
+        // 元叙述当正文输出。应整段剥离。
+        val raw = "好的，现在等他继续聊，目前氛围是周末夜晚的温馨时刻，越越状态稳定"
+        val cleaned = ResponsePostProcessor.stripThinkingContent(raw)
+        assertTrue("元叙述应被剥离，实际：$cleaned", cleaned.isBlank())
+    }
+
+    @Test
+    fun strip_metaNarration_sceneStateOnly_becomesBlank() {
+        val raw = "目前氛围是温馨的居家时刻，宝宝状态稳定"
+        val cleaned = ResponsePostProcessor.stripThinkingContent(raw)
+        assertTrue("纯状态评估应被剥离，实际：$cleaned", cleaned.isBlank())
+    }
+
+    @Test
+    fun strip_metaNarration_normalCare_notStripped() {
+        // 防误伤：含第二人称呼语或疑问的正常关心，即使含「状态/氛围」字样也不剥离。
+        assertEquals("宝宝你现在状态怎么样呀", ResponsePostProcessor.stripThinkingContent("宝宝你现在状态怎么样呀"))
+        assertEquals("你状态不错吧", ResponsePostProcessor.stripThinkingContent("你状态不错吧"))
+        assertEquals("今天氛围怎么样呀", ResponsePostProcessor.stripThinkingContent("今天氛围怎么样呀"))
+    }
+
+    @Test
     fun looksLikeThinkingLeak_normalChat_false() {
         assertFalse(ResponsePostProcessor.looksLikeThinkingLeak("今晚想吃什么呀～"))
         assertNull(ResponsePostProcessor.extractThinkingContent("今晚想吃什么呀～").second)

@@ -6,9 +6,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -49,8 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.yunian.ai.R
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTab
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTabs
+import com.yunian.ai.uicommon.theme.TabSelectedBackground
 import com.kyant.backdrop.Backdrop
 
 data class BottomNavItem(
@@ -68,9 +69,16 @@ fun FloatingGlassBottomNav(
     modifier: Modifier = Modifier,
     backdrop: Backdrop? = null
 ) {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val contentColor = if (isDark) Color.White else Color.Black
-    val iconColorFilter = ColorFilter.tint(contentColor)
+    // 微信风格底部导航（替代原液态玻璃悬浮胶囊）：
+    // 实底不透明 surface 背景 + 顶部分割线，选中项用 C2BEF0 胶囊高亮。
+    val colorScheme = MaterialTheme.colorScheme
+    val isDark = colorScheme.background.luminance() < 0.5f
+    val contentColor = if (isDark) Color.White else Color(0xFF191919)
+    val unselectedContent = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF8A829A)
+    val dividerColor = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFE0E0E0)
+    val selectedBg = TabSelectedBackground
+    // 选中态文字用近黑，保证在 C2BEF0 浅底上可读（深色模式同样浅底浅字会糊，故文字恒深色）
+    val selectedContent = Color(0xFF191919)
 
     var visualSelectedIndex by rememberSaveable { mutableIntStateOf(currentIndex) }
     var pendingNavigationIndex by remember { mutableStateOf<Int?>(null) }
@@ -90,46 +98,79 @@ fun FloatingGlassBottomNav(
         }
     }
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        contentAlignment = Alignment.BottomCenter
+            .background(colorScheme.surface)
     ) {
-        LiquidBottomTabs(
-            selectedTabIndex = { visualSelectedIndex },
-            onTabSelected = selectTab,
-            backdrop = backdrop,
-            tabsCount = items.size,
-            modifier = Modifier.fillMaxWidth().selectableGroup(),
-            isDark = isDark,
-            containerHeight = 64.dp,
-            contentPadding = 4.dp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(dividerColor)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(66.dp)
+                .selectableGroup(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             items.forEachIndexed { index, item ->
-                LiquidBottomTab(
-                    onClick = { selectTab(index) },
-                    modifier = Modifier.semantics {
-                        selected = index == visualSelectedIndex
-                    }
-                ) {
-                    Icon(
-                        imageVector = if (index == visualSelectedIndex) item.selectedIcon else item.unselectedIcon,
-                        contentDescription = item.title,
-                        tint = Color.Unspecified,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .graphicsLayer(colorFilter = iconColorFilter)
-                    )
-                    Text(
-                        text = item.title,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = if (index == visualSelectedIndex) FontWeight.SemiBold else FontWeight.Normal,
-                            fontSize = 12.sp
+                val selected = index == visualSelectedIndex
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .semantics { this.selected = selected }
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = { selectTab(index) }
                         ),
-                        color = contentColor
-                    )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    val iconColor = if (selected) selectedContent else unselectedContent
+                    val iconColorFilter = ColorFilter.tint(iconColor)
+                    Box(
+                        modifier = Modifier
+                            .padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(50))
+                            .then(
+                                if (selected) {
+                                    Modifier
+                                        .background(selectedBg)
+                                        .padding(horizontal = 14.dp, vertical = 3.dp)
+                                } else {
+                                    Modifier.padding(horizontal = 14.dp, vertical = 3.dp)
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                contentDescription = item.title,
+                                tint = Color.Unspecified,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .graphicsLayer(colorFilter = iconColorFilter)
+                            )
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    fontSize = 13.sp
+                                ),
+                                color = iconColor
+                            )
+                        }
+                    }
                 }
             }
         }

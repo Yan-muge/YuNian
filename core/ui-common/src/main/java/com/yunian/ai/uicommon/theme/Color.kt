@@ -5,6 +5,9 @@ import androidx.compose.ui.graphics.Color
 val PastelMint = Color(0xFFDEFCF9)
 val PastelSky = Color(0xFFCADEFC)
 val PastelLavender = Color(0xFFC3BEF0)
+
+// 微信风格 tab 选中态背景色（用户指定）
+val TabSelectedBackground = Color(0xFFC2BEF0)
 val PastelLilac = Color(0xFFCCA8E9)
 
 val WeChatDarkBackground = Color(0xFF16131F)

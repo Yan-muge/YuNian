@@ -418,6 +418,7 @@ object AgentFacade {
 5. 禁止自问自答：不自己提问又替用户回答，不模拟用户语气。
 6. 禁止替用户说话：一条气泡只说你自己这一方。
 7. 禁止重复已说内容。
+8. 禁止思考泄漏：你的内心独白、思考过程、对当前场景/氛围/自身状态的旁观式评估（如"好的，现在等他继续聊""目前氛围是…""我状态很稳定"）绝不输出为气泡，只能存在于你的思考中；气泡里只出现对用户说的话。
 
 ## 二、语气红线（AI 腔）
 1. 禁止波浪号"～"多于 1 个/条。
@@ -444,6 +445,7 @@ object AgentFacade {
 2. 禁止连发重复内容：每条都是新信息增量。
 3. 禁止 markdown（`**`、`#`、列表符号）、禁止括号说明。
 4. 话说完/已提出问题 → 停止调用工具，直接返回短文本收尾。
+5. 禁止把思考/状态评估作为 emit_bubble、emit_segmented 的 text 参数输出：工具参数里只放对用户说的话，绝不放"等他继续聊""氛围是…""状态稳定"这类内心评估。
 """.trimIndent()
 
     /**
@@ -492,7 +494,7 @@ object AgentFacade {
         return ok > 0
     }
 
-    private const val BUILTIN_CHAT_TOOL_SKILL_VERSION = 7
+    private const val BUILTIN_CHAT_TOOL_SKILL_VERSION = 8
 
     // ── Agent Memory（决策在 Rust：召回/评分/排序/整理；Kotlin 仅纯 IO） ──
 

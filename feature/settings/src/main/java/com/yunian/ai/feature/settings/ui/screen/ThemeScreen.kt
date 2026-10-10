@@ -52,7 +52,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import com.yunian.ai.common.AppSettingsStore
 import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import androidx.compose.material3.Switch
-import androidx.compose.runtime.LocalContext
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 

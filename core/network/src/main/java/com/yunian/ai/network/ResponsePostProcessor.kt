@@ -52,6 +52,20 @@ object ResponsePostProcessor {
         "先分析", "先理解用户", "最终回复应该", "输出格式",
     )
 
+    // ── 元叙述 / 场景状态评估标记 ──────────────────────────────────────
+    // 第一人称思考插件（chat.first_person_reasoning）让模型用「意识流」思考，但对无独立
+    // reasoning 通道的模型，思考会写进正文。除了带前缀的 CoT，还有一种更难缠的形态：
+    // 模型把「对当前场景/角色状态的旁观式评估」直接当正文输出，例如
+    //   「好的，现在等他继续聊，目前氛围是周末夜晚的温馨时刻，越越状态稳定」
+    // 这类文本是**整段元叙述**（描述自己在等待/评估氛围/评估状态），不是对用户说话，
+    // 正常对话中几乎不会出现，故命中即判为思考泄漏（整体剥离，而非只切前缀）。
+    private val META_NARRATION_MARKERS = listOf(
+        "等他继续聊", "等他回复", "等他回话", "等他消息", "等待用户", "等待他",
+        "目前氛围", "当前氛围", "此刻氛围", "氛围是", "氛围属于",
+        "状态稳定", "情绪稳定", "状态不错", "状态良好", "情绪不错", "心情稳定",
+        "继续观察", "保持观察", "等待后续", "静待", "先不打扰",
+    )
+
     fun extractThinkingContent(content: String): Pair<String, String?> {
         if (content.isBlank()) return content to null
         val extracted = mutableListOf<String>()
@@ -397,6 +411,14 @@ object ResponsePostProcessor {
         var result = text.trim()
         if (result.isEmpty()) return result
 
+        // 元叙述整段剥离（优先于前缀剥离）：命中「等待/氛围/状态评估」等旁观式描述时，
+        // 整段视为思考泄漏直接置空。命中条件刻意收窄——要求命中 ≥1 个强状态评估标记
+        // （「等他…」「氛围…」「状态稳定」等），且文本不含对用户的直接呼语/提问/语气词，
+        // 避免误伤「宝宝你状态怎么样呀」这类正常关心。
+        if (looksLikeMetaNarration(result)) {
+            return ""
+        }
+
         repeat(3) {
             val next = PLAINTEXT_THINK_PREFIX.replace(result, "").trim()
             if (next == result) return@repeat
@@ -431,5 +453,26 @@ object ResponsePostProcessor {
         }
 
         return result.trim()
+    }
+
+    /**
+     * 判断文本是否为「元叙述 / 场景状态评估」——整段旁观式描述，而非对用户的对话。
+     *
+     * 命中条件（刻意收窄，防误伤）：
+     * 1. 命中 ≥1 个强状态评估标记（「等他继续聊」「目前氛围」「状态稳定」等）；
+     * 2. 且不含对用户的直接呼语（你/宝宝/亲爱的…）或提问语气——正常对话里 AI 说
+     *    「宝宝你状态怎么样呀」也含「状态」，但那是关心不是旁白，必须放行。
+     */
+    private fun looksLikeMetaNarration(text: String): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        val hit = META_NARRATION_MARKERS.count { t.contains(it) }
+        if (hit == 0) return false
+        // 含第二人称呼语或疑问 → 是对用户说话，不是旁白，放行
+        val directAddress = t.contains("你") || t.contains("您") ||
+            t.contains("宝宝") || t.contains("亲爱的") || t.contains("老公") || t.contains("老婆")
+        val asksQuestion = t.contains('？') || t.contains('?') ||
+            t.endsWith("吗") || t.endsWith("呢") || t.endsWith("呀") || t.endsWith("吧")
+        return !directAddress && !asksQuestion
     }
 }

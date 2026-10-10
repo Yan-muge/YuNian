@@ -210,9 +210,13 @@ impl TurnStateController for DefaultTurnStateMachine {
         } else {
             format!("（{}）", parts.join("，"))
         };
+        // 症状 2 修复：不再输出「[回合状态 {round}/{max_rounds}]」——分母 64 会让模型误以为
+        // 「预算还很充足，应当继续连发」，是「越说越多、越说越跑偏」的直接推手。
+        // 改为只陈述已完成事实（已输出 N 条气泡），不给任何「还剩多少」的暗示，
+        // 收尾仍由模型自决 + max_rounds 硬兜底（见 MAX_AGENT_TURN_ROUNDS）。
         TurnStateDecision {
             action: TurnAction::Continue,
-            status_text: format!("[回合状态 {}/{}]{}", ctx.round, ctx.max_rounds, detail),
+            status_text: format!("[回合状态]{}", detail),
             tool_choice_override: String::new(),
         }
     }
@@ -2232,10 +2236,11 @@ mod tests {
         let requests = transport.requests.lock().unwrap();
         let first_body: serde_json::Value = serde_json::from_str(&requests[0].2).unwrap();
         let msgs = first_body.get("messages").and_then(|v| v.as_array()).unwrap();
+        // 症状 2 修复后不再带分母：首轮无工具调用、无文字产出，status_text 为「[回合状态]」。
         assert!(
             msgs.iter().any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system")
-                && m.get("content").and_then(|c| c.as_str()).unwrap_or("").contains("[回合状态 1/3]")),
-            "首轮应注入 [回合状态 1/3] system 消息: {first_body}"
+                && m.get("content").and_then(|c| c.as_str()).unwrap_or("").contains("[回合状态]")),
+            "首轮应注入 [回合状态] system 消息: {first_body}"
         );
     }
 

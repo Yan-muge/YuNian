@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,13 +59,12 @@ import com.yunian.ai.database.model.CompanionEntity
 import com.yunian.ai.uicommon.theme.PinkPrimary
 import com.yunian.ai.uicommon.theme.AdaptiveSizing
 import com.yunian.ai.uicommon.theme.rememberAdaptiveSizing
+import com.yunian.ai.uicommon.theme.TabSelectedBackground
 import com.kyant.capsule.ContinuousCapsule
 import com.yunian.ai.database.viewmodel.ChatGroupViewModel
 import com.yunian.ai.uicommon.component.AppListItemLayout
 import com.yunian.ai.uicommon.component.glass.GlassButton
 import com.yunian.ai.uicommon.component.glass.LocalPageBackdrop
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTab
-import com.yunian.ai.uicommon.component.glass.LiquidBottomTabs
 import com.yunian.ai.uicommon.component.glass.drawGlass
 import com.yunian.ai.uicommon.theme.AppTheme
 import java.text.SimpleDateFormat
@@ -286,9 +285,13 @@ fun HomeTabBar(
     onTabSelected: (HomeTab) -> Unit,
     backdrop: com.kyant.backdrop.Backdrop? = LocalPageBackdrop.current
 ) {
+    // 微信风格顶部 tab（替代原液态玻璃悬浮胶囊）：
+    // 无容器底色，选中项用 C2BEF0 胶囊高亮 + 近黑文字，未选中用次级文字色。
     val colorScheme = AppTheme.colors
     val isDark = colorScheme.background.luminance() < 0.5f
-    val contentColor = if (isDark) Color.White else Color.Black
+    val unselectedContent = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF8A829A)
+    val selectedContent = Color(0xFF191919)
+    val selectedBg = TabSelectedBackground
 
     val tabs = HomeTab.values().toList()
     val labels = mapOf(
@@ -296,50 +299,34 @@ fun HomeTabBar(
         HomeTab.GROUP to "群聊",
         HomeTab.FRIEND to "好友"
     )
-    val currentIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
 
-    var visualSelectedIndex by androidx.compose.runtime.saveable.rememberSaveable {
-        androidx.compose.runtime.mutableIntStateOf(currentIndex)
-    }
-    var pendingNavigationIndex by remember { androidx.compose.runtime.mutableStateOf<Int?>(null) }
-    val currentOnTabSelected by androidx.compose.runtime.rememberUpdatedState(onTabSelected)
-
-    androidx.compose.runtime.LaunchedEffect(currentIndex) { visualSelectedIndex = currentIndex }
-    androidx.compose.runtime.LaunchedEffect(pendingNavigationIndex) {
-        val index = pendingNavigationIndex ?: return@LaunchedEffect
-        androidx.compose.runtime.withFrameNanos {}
-        currentOnTabSelected(tabs[index])
-        if (pendingNavigationIndex == index) pendingNavigationIndex = null
-    }
-    val selectTab: (Int) -> Unit = { index ->
-        if (index != visualSelectedIndex) {
-            visualSelectedIndex = index
-            pendingNavigationIndex = index
-        }
-    }
-
-    LiquidBottomTabs(
-        selectedTabIndex = { visualSelectedIndex },
-        onTabSelected = selectTab,
-        backdrop = backdrop,
-        tabsCount = tabs.size,
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        isDark = isDark,
-        containerHeight = 56.dp,
-        contentPadding = 4.dp
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        tabs.forEachIndexed { index, tab ->
-            LiquidBottomTab(
-                onClick = { selectTab(index) },
-                modifier = Modifier.semantics { selected = index == visualSelectedIndex }
+        tabs.forEach { tab ->
+            val selected = tab == selectedTab
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (selected) selectedBg else Color.Transparent)
+                    .clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = { onTabSelected(tab) }
+                    )
+                    .semantics { this.selected = selected }
+                    .padding(horizontal = 16.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = labels[tab] ?: "",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = if (index == visualSelectedIndex) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 14.sp
                     ),
-                    color = contentColor
+                    color = if (selected) selectedContent else unselectedContent
                 )
             }
         }

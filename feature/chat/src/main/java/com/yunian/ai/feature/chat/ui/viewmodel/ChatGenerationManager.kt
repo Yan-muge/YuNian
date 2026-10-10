@@ -48,7 +48,6 @@ import com.yunian.ai.feature.chat.timeline.StreamingReasoningMessagePipeline
 import com.yunian.ai.feature.chat.voice.ChatTtsController
 import com.yunian.ai.feature.chat.voice.ChatTtsState
 import com.yunian.ai.network.ChatTypingState
-import com.yunian.ai.network.bubble.BubbleLoopRunner
 import com.yunian.ai.network.stream.NonStreamingAssistantStreamAdapter
 import com.yunian.ai.network.tts.ChatTtsConfig
 import com.yunian.ai.network.tts.ChatTtsMode
@@ -88,6 +87,17 @@ class ChatGenerationManager private constructor(
         private val questionRegex = Regex("[?？]|吗|呢|什么|怎么|为什么|多少|哪|谁|几|是不是|有没有|能不能|会不会|要不要|好不好")
 
         private const val IDLE_DISPOSE_MS = 60_000L
+
+        /**
+         * Rust Agent 单回合「工具调用轮数」上限（症状 2 修复）。
+         *
+         * 与 [com.yunian.ai.network.bubble.BubbleLoopRunner.MAX_BUBBLES]（气泡数兜底护栏）
+         * 语义不同：本值是 `AgentTurnRequest.maxRounds`，即 Rust `while rounds_used < max_rounds`
+         * 的 API 调用轮数上限。此前误把 MAX_BUBBLES(64) 当轮数传入，模型每轮都可再调一次
+         * emit_bubble/emit_segmented，唯一停止条件是模型自己收手，导致「连发十几条且越说越跑偏」。
+         * 收敛到 10 轮：常规多气泡回复（3~5 条）远够用，失控时硬兜底。
+         */
+        private const val MAX_AGENT_TURN_ROUNDS = 10
 
         fun get(application: Application, companionId: Long): ChatGenerationManager =
             instances.getOrPut(companionId) { ChatGenerationManager(application, companionId) }
@@ -1028,8 +1038,9 @@ class ChatGenerationManager private constructor(
                     groupId = null,
                     historyJson = serializeHistoryJson(modelHistory),
                     tools = agentTools,
-                    // 气泡轮次预算：Rust 每轮产出 bubble/sticker 事件，由 AgentEvent 驱动连发
-                    maxRounds = BubbleLoopRunner.MAX_BUBBLES.toUInt(),
+                    // 工具调用轮数预算（症状 2 修复）：用独立常量 MAX_AGENT_TURN_ROUNDS，
+                    // 不再复用 BubbleLoopRunner.MAX_BUBBLES（那是气泡数兜底护栏，64 会被当成轮数）。
+                    maxRounds = MAX_AGENT_TURN_ROUNDS.toUInt(),
                     // 首轮用 auto（不用 required）：DeepSeek thinking 模式拒绝 required
                     toolChoice = "auto",
                     stickerProbability = 0u,
@@ -1365,7 +1376,7 @@ class ChatGenerationManager private constructor(
             )
 
             // 气泡连发（追尾气泡）已由 Rust `AgentFacade.runTurn` 的 bubble 事件流承担：
-            // Agent 路径按 `BubbleLoopRunner.MAX_BUBBLES` 轮预算在 Rust 侧连发，
+            // Agent 路径按 MAX_AGENT_TURN_ROUNDS 轮预算在 Rust 侧连发，
             // 本 vision 分支为单轮图片理解，不产出追尾气泡。
             val allBubbleContent = aiContent
             responseFinalizer.afterDeliver(
