@@ -206,7 +206,7 @@ class PluginEnablementStoreImplTest {
         assertTrue(PluginEnablementCodec.isValidId("wechat.channel"))
     }
 
-    // ── 出厂默认停用集（v2.2.0：默认关闭通道 + 非聊天类通用插件）──────────────────
+    // ── 出厂默认停用集（v2.2.0：只默认关闭两个消息通道，通用插件默认全开）──────────
 
     private fun storeWithFactoryDefaults(
         dao: AppMetaDao,

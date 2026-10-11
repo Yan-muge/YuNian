@@ -186,7 +186,7 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
         private val bgScope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
 
         /**
-         * 出厂默认停用集（v2.2.0 产品默认：只保留「纯聊天」所需插件）。
+         * 出厂默认停用集（v2.2.0 产品默认：**只默认关闭两个消息通道**）。
          *
          * 语义：KV 键 `plugin.enablement` **从未写过**（用户从未在本机改过任何插件开关）时，
          * 把下列插件视为「出厂即停用」。它们照常被蓝图装载，随后由
@@ -198,16 +198,15 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
          * [PluginEnablementStoreImpl.setEnabled] 会把该 id 从 KV 集里移除，
          * 重启后不再被卸载 ⇒ **开启可跨重启保留**。
          *
-         * 保留启用：`skill.builtin_chat_protocol`（气泡/连发/表情用法，聊天观感核心）、
-         * `sticker.preference`（表情包偏好引擎）。
+         * 注意：通用插件（automation.core / message.send / ui.assists /
+         * chat.first_person_reasoning）**不再默认停用**——2026-10-11 实测发现
+         * 关闭 `chat.first_person_reasoning` 会连带失去它注入的「思考泄漏红线」，
+         * 导致模型把「等他回答」这类元叙述写进气泡。产品侧遂回滚为「通用插件默认全开」，
+         * 由用户在设置页自行按需关闭（关闭仍可跨重启保留）。
          */
         private val FACTORY_DISABLED_PLUGIN_IDS: Set<String> = setOf(
             "channel.qqbot",
             "channel.wechat",
-            "automation.core",
-            "message.send",
-            "ui.assists",
-            "chat.first_person_reasoning",
         )
 
         fun initBusiness(app: Application) {
