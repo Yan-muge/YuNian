@@ -7,7 +7,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
 /**
- * 液态玻璃效果全局开关（默认关闭，用户可在「主题模式」设置页开启）。
+ * 液态玻璃效果全局开关（**恒为 [enabled] = false**）。
+ *
+ * ## 现状：用户开关已下线
+ *
+ * 界面整体改为微信风格实底 surface 后，本开关不再产生任何视觉差异，
+ * 因此「主题模式」设置页的入口与 `AppSettingsStore` 的持久化一并移除，
+ * 本对象退化为一个**统一的降级开关**：始终关闭，全部玻璃消费方走纯色分支。
+ *
+ * 保留本对象（而不是删除）是为了不必改动各消费点的判定结构——
+ * 将来若重新引入开关，只需恢复一个写入点（`GlassEffectGate.enabled = ...`）即可全局生效。
  *
  * ## 生效机制
  *
@@ -27,8 +36,8 @@ import androidx.compose.ui.graphics.Color
  *
  * ## 持久化
  *
- * 存储在 `AppSettingsStore`（`liquid_glass_enabled`，默认 false）；
- * 启动时由 Application 同步到本开关，设置页切换时双写（store + 本开关）。
+ * **无**。原 `AppSettingsStore` 的 `liquid_glass_enabled` 键随开关一并退役，
+ * 启动时也不再由 Application 回填——即便老用户曾打开过，本开关仍保持 false。
  */
 object GlassEffectGate {
     var enabled: Boolean by mutableStateOf(false)

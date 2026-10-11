@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
@@ -61,6 +62,25 @@ data class BottomNavItem(
     val unselectedIcon: ImageVector,
     val route: String
 )
+
+/** 底栏顶部分割线高度。 */
+private val BottomNavDividerHeight = 1.dp
+
+/** 底栏图标行高度（不含分割线，也不含系统导航栏内边距）。 */
+private val BottomNavRowHeight = 60.dp
+
+/**
+ * 底栏**自身**高度（分割线 + 图标行），**不含** `navigationBars` 内边距。
+ *
+ * 主 Tab 页容器（[MainTabScreen]）用它给 Pager 让位：总让位高度 =
+ * 本值 + `WindowInsets.navigationBars` 的 bottom。
+ *
+ * 为什么必须由容器统一让位，而不是各 Tab 页自己写一个魔数：
+ * 之前 HomeScreen / ProfileScreen / ContactsScreen 各写各的（80dp、80dp、0dp），
+ * 一旦漏写（ProfileScreen 就没加系统导航栏内边距）最后一条就被底栏盖住。
+ * 让位是一个**只有底栏知道答案**的问题，所以答案也只应出现在这里。
+ */
+val BottomNavBarHeight: Dp = BottomNavDividerHeight + BottomNavRowHeight
 
 @Composable
 fun FloatingGlassBottomNav(
@@ -102,19 +122,24 @@ fun FloatingGlassBottomNav(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
+            // 沉浸式（关键顺序）：底色必须先铺满**整块节点**——包含 navigationBars
+            // （手势条 / 三键导航）所占的那一段高度——再把内容让出该内边距。
+            // 反过来写（先 windowInsetsPadding 后 background）时，background 处于链条
+            // 内层、只覆盖被压缩后的内容区，底部会空出系统导航栏的一整条，
+            // 表现为「底栏悬浮在内容上、下方露出一条系统色」——即非沉浸。
             .background(colorScheme.surface)
+            .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(1.dp)
+                .height(BottomNavDividerHeight)
                 .background(dividerColor)
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(60.dp)
+                .height(BottomNavRowHeight)
                 .selectableGroup(),
             verticalAlignment = Alignment.CenterVertically
         ) {

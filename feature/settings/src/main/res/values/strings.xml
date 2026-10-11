@@ -31,8 +31,6 @@
     <string name="theme_dark_desc">护眼的暗色风格</string>
     <string name="theme_system">跟随系统</string>
     <string name="theme_system_desc">自动切换浅色/深色</string>
-    <string name="glass_effect_title">液态玻璃效果</string>
-    <string name="glass_effect_subtitle">启用玻璃质感的界面视觉（低端设备建议关闭）</string>
 
     <!-- Settings Screen -->
     <string name="settings_title">API 设置</string>

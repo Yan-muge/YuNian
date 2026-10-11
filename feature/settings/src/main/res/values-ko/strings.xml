@@ -22,8 +22,6 @@
     <string name="theme_dark_desc">눈에 편안한 다크 스타일</string>
     <string name="theme_system">시스템 따라가기</string>
     <string name="theme_system_desc">자동으로 라이트/다크 전환</string>
-    <string name="glass_effect_title">리퀴드 글래스 효과</string>
-    <string name="glass_effect_subtitle">글래스 스타일 화면 효과 사용 (저사양 기기에서는 끄는 것 권장)</string>
 
     <string name="settings_title">API 설정</string>
     <string name="settings_hint">카드를 탭하여 API 설정</string>

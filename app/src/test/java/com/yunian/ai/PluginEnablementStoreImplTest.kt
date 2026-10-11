@@ -17,7 +17,8 @@ import org.junit.Test
  * 不碰 Room 运行时（[AppMetaDao] 是普通 interface，用内存 Map 实现它即可驱动**真实的**
  * [AppMetaStore] 与真实编解码路径）——与 `core:agent` 的 `CapabilityGrantTestFixtures` 同一手法。
  *
- * 重点覆盖契约的**硬要求**：读失败 / 首启 / 内容损坏 ⇒ 空集（= 全部启用）。
+ * 重点覆盖契约的**硬要求**：读失败 / 首启 / 内容损坏 ⇒ 空集（= 全部启用）；
+ * 另覆盖「出厂默认停用集」——键从未写过且指定默认集时返回该集，且用户开启后可持久。
  */
 class PluginEnablementStoreImplTest {
 
@@ -203,5 +204,50 @@ class PluginEnablementStoreImplTest {
         assertFalse(PluginEnablementCodec.isValidId(""))
         assertFalse(PluginEnablementCodec.isValidId("a b"))
         assertTrue(PluginEnablementCodec.isValidId("wechat.channel"))
+    }
+
+    // ── 出厂默认停用集（v2.2.0：默认关闭通道 + 非聊天类通用插件）──────────────────
+
+    private fun storeWithFactoryDefaults(
+        dao: AppMetaDao,
+        defaults: Set<String> = setOf("channel.qqbot", "channel.wechat"),
+    ) = PluginEnablementStoreImpl(
+        AppMetaStore(dao),
+        RecordingPluginEnablementStoreLog(),
+        factoryDisabledIds = defaults,
+    )
+
+    @Test
+    fun coldStartWithoutStoredValueReturnsFactoryDisabledSet() = runBlocking {
+        val dao = FakeDao()
+        val store = storeWithFactoryDefaults(dao)
+
+        assertEquals(setOf("channel.qqbot", "channel.wechat"), store.disabledIds())
+        // 只读不写：冷启动不落盘，只有在用户真正改动开关时才写 KV。
+        assertNull(dao.rawOf(PluginEnablementStoreImpl.KEY))
+    }
+
+    @Test
+    fun enablingFactoryDisabledPluginPersistsAcrossRestart() = runBlocking {
+        val dao = FakeDao()
+        val defaults = setOf("channel.qqbot", "channel.wechat")
+        val store = storeWithFactoryDefaults(dao, defaults)
+
+        // 用户把出厂关掉的 channel.qqbot 打开 → 落盘为「出厂集 − 该 id」。
+        store.setEnabled("channel.qqbot", true)
+
+        val afterRestart = storeWithFactoryDefaults(dao, defaults)
+        assertEquals(setOf("channel.wechat"), afterRestart.disabledIds())
+        assertEquals("channel.wechat", dao.rawOf(PluginEnablementStoreImpl.KEY))
+    }
+
+    @Test
+    fun storedUserSetTakesPrecedenceOverFactoryDefaults() = runBlocking {
+        val dao = FakeDao()
+        // 用户此前动过开关：KV 里已是一份完整集合，出厂默认集不再参与。
+        dao.putRaw(PluginEnablementStoreImpl.KEY, "channel.wechat")
+        val store = storeWithFactoryDefaults(dao)
+
+        assertEquals(setOf("channel.wechat"), store.disabledIds())
     }
 }

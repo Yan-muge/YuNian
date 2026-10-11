@@ -70,7 +70,6 @@ import com.yunian.ai.security.SecurityState
 import android.content.ComponentCallbacks2
 import com.yunian.ai.uicommon.component.ChatBackgroundCache
 import com.yunian.ai.uicommon.component.getChatBackgroundKey
-import com.yunian.ai.uicommon.component.glass.GlassEffectGate
 import coil.Coil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -185,6 +184,32 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
             private set
 
         private val bgScope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
+
+        /**
+         * 出厂默认停用集（v2.2.0 产品默认：只保留「纯聊天」所需插件）。
+         *
+         * 语义：KV 键 `plugin.enablement` **从未写过**（用户从未在本机改过任何插件开关）时，
+         * 把下列插件视为「出厂即停用」。它们照常被蓝图装载，随后由
+         * [applyDisabledPluginOverlay] 卸载——效果等价于「出厂默认关闭」。
+         *
+         * 为什么不用「把蓝图条目写成 `enabled:false`」：蓝图是**唯一装载源**，
+         * 而停用覆盖层只能做减法（unload）——蓝图里禁用的插件，用户即便在设置页打开，
+         * 重启后仍不会被装载（开启丢失）。改用本「出厂默认停用集」后，用户一旦手动开启，
+         * [PluginEnablementStoreImpl.setEnabled] 会把该 id 从 KV 集里移除，
+         * 重启后不再被卸载 ⇒ **开启可跨重启保留**。
+         *
+         * 保留启用：`skill.builtin_chat_protocol`（气泡/连发/表情用法，聊天观感核心）、
+         * `sticker.preference`（表情包偏好引擎）。
+         */
+        private val FACTORY_DISABLED_PLUGIN_IDS: Set<String> = setOf(
+            "channel.qqbot",
+            "channel.wechat",
+            "automation.core",
+            "message.send",
+            "ui.assists",
+            "chat.first_person_reasoning",
+        )
+
         fun initBusiness(app: Application) {
             PerformanceTrace.markStartupStage("initbusiness_begin")
             SaltStore.init(app)
@@ -213,12 +238,10 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
             // 启动即后台预热后，首次导航只命中缓存。幂等，且不改变同设备档位。
             bgScope.launch { HardwareInfo.warmUp() }
 
-            // 液态玻璃开关：启动时从设置加载到 GlassEffectGate（默认关闭，读取完成前保持关闭）。
-            // 主题设置页切换时双写（AppSettingsStore + GlassEffectGate），此处只在进程启动时读一次。
-            bgScope.launch {
-                runCatching { GlassEffectGate.enabled = AppSettingsStore(app).getLiquidGlassEnabled() }
-                    .onFailure { SecureLog.e("YuNianApplication", "load liquidGlassEnabled failed", it) }
-            }
+            // 「液态玻璃效果」开关已下线：界面整体改为微信风格实底 surface 后，该开关不再产生
+            // 任何视觉差异，设置页入口也已移除。GlassEffectGate 保持默认值 false，各消费方
+            // 走既有的纯色降级分支——因此这里不再从 AppSettingsStore 读取旧值（老用户即便曾
+            // 打开过，也不再被重新点亮）。
 
             bgScope.launch {
                 // ── 放行屏障（T01′）──────────────────────────────────────────────────────
@@ -664,9 +687,12 @@ class YuNianApplication : Application(), ImageLoaderFactory, androidx.work.Confi
             // 语义是**减法**——只记「被显式停用」的 id，不在集合里的一律视为启用。
             // 持久化走 AppMetaStore(KV 单键)，不新增 Room 表 / 字段（schema 冻结红线）。
             // 读失败由实现方 fail-safe 成空集（= 全部启用），见 PluginEnablementStoreImpl。
+            // 出厂默认停用集（FACTORY_DISABLED_PLUGIN_IDS）只在「KV 从未写过」时生效，
+            // 让「默认关闭 + 用户开启可持久」两者兼得（详见该常量 KDoc）。
             ServiceRegistry.registerSingleton(PluginEnablementStore::class.java) {
                 PluginEnablementStoreImpl(
-                    ServiceRegistry.getOrThrow(AppMetaStore::class.java)
+                    ServiceRegistry.getOrThrow(AppMetaStore::class.java),
+                    factoryDisabledIds = FACTORY_DISABLED_PLUGIN_IDS,
                 )
             }
 

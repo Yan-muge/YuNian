@@ -1,0 +1,55 @@
+{
+  "name": "示例世界书",
+  "description": "可选：这本世界书的一句话说明",
+  "scan_depth": 10,
+  "token_budget": 10000,
+  "entries": {
+    "1": {
+      "id": 1,
+      "keys": [],
+      "secondary_keys": [],
+      "content": "【恒定设定】这是一条 constant=true 的条目，不受关键词命中影响，只要世界书启用就会被注入。适合放世界观、全局规则这类应当始终生效的内容。",
+      "enabled": true,
+      "insertion_order": 1,
+      "case_sensitive": false,
+      "use_regex": false,
+      "constant": true,
+      "position": "after_char",
+      "role": "system",
+      "scan_depth": 10
+    },
+    "2": {
+      "id": 2,
+      "keys": ["小袁", "袁"],
+      "secondary_keys": [],
+      "content": "【人物设定】当对话中出现「小袁」时触发。这里写与关键词相关的设定内容。命中后按 position 指定的位置注入上下文。",
+      "enabled": true,
+      "insertion_order": 2,
+      "case_sensitive": false,
+      "use_regex": false,
+      "constant": false,
+      "position": "at_depth",
+      "role": "system",
+      "scan_depth": 10,
+      "depth": 4,
+      "extensions": {
+        "_priority": 100,
+        "_sortOrder": 0
+      }
+    },
+    "3": {
+      "id": 3,
+      "keys": ["苹果|香蕉|橘子"],
+      "secondary_keys": [],
+      "content": "【正则示例】use_regex=true 时，keys 里的每一项按正则匹配。本项匹配「苹果」「香蕉」「橘子」任意一个。",
+      "enabled": true,
+      "insertion_order": 3,
+      "case_sensitive": false,
+      "use_regex": true,
+      "constant": false,
+      "position": "top_of_chat",
+      "role": "system",
+      "scan_depth": 10
+    }
+  }
+}

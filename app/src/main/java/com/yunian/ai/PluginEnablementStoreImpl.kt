@@ -104,13 +104,18 @@ object PluginEnablementCodec {
  *   「schema 冻结基线：新增功能走 AppMetaStore(KV)」红线）；
  * - 不新增任何模块依赖（`:app` 已直接依赖 `core:database`）。
  *
- * ## fail-safe：读不到 = 全部启用（硬要求）
- * [disabledIds] 的失败路径**全部收敛到空集**，与引入本契约之前的现状逐字一致：
- * - KV **读取失败**（DB 异常等）⇒ 记错误日志后返回空集；
- * - 从没写过 / 被清空 ⇒ 空集；
+ * ## fail-safe：读失败 = 全部启用（硬要求）
+ * [disabledIds] 的失败路径**全部收敛到空集**：
+ * - KV **读取失败**（DB 异常等）⇒ 记错误日志后返回空集（= 全部启用）；
  * - 内容损坏 ⇒ [PluginEnablementCodec.decode] 只丢弃坏行，不抛异常，最坏也是空集；
  * - 任何情况下都**不抛异常**、**不返回「全停用」**——设置区本身可能来自插件，
  *   全停用会让用户无法在设置页里自救。
+ *
+ * ## 唯一的例外：键**从未写过** ⇒ 出厂默认停用集
+ * 「从没写过」与「读失败」是两件事：前者是**冷启动**（用户从未在本机改过任何插件开关），
+ * 此时返回 [factoryDisabledIds]（出厂配置；默认空集 = 全部启用）；后者是异常，一律返回空集。
+ * 一旦用户动过任一开关，[setEnabled] 会把整段（含出厂集）落盘，此后键存在、以 KV 为准，
+ * 用户的开启因此能跨重启保留。
  *
  * 唯一照常向上传播的是 [CancellationException]（协程取消不是「读失败」，不该被吞）。
  *
@@ -123,13 +128,37 @@ object PluginEnablementCodec {
 class PluginEnablementStoreImpl(
     private val metaStore: AppMetaStore,
     private val log: PluginEnablementStoreLog = SecureLogPluginEnablementStoreLog,
+    /**
+     * 出厂默认停用集（KV 键**从未写过**时返回它）。
+     *
+     * 用途：让产品可以「若干插件默认关闭」而不牺牲用户的开/关持久化——
+     * 键不存在 ⇒ 冷启动 ⇒ 返回本集（出厂配置）；一旦用户在设置页动过任一开关，
+     * [setEnabled] 会把「当前集（含本出厂集）± 本次改动」整段落盘，此后以 KV 为准。
+     * 于是「用户把出厂关掉的插件打开」会真的跨重启保留（KV 里已不含该 id）——
+     * 这正是「只把蓝图条目写成 `enabled:false`」做不到的（蓝图是唯一装载源，覆盖层只能减不能加）。
+     *
+     * 默认空集 ⇒ 行为与引入本参数之前**逐字一致**（键不存在 = 全部启用）。
+     * 传入值应与 `PluginManifest.id` 同域；不合法 id 会被静默忽略（不生效）。
+     */
+    private val factoryDisabledIds: Set<String> = emptySet(),
 ) : PluginEnablementStore {
 
     /** 串行化「读-改-写」，避免并发 setEnabled 互相覆盖。 */
     private val writeLock = Mutex()
 
     override suspend fun disabledIds(): Set<String> {
-        val raw = readRaw() ?: return emptySet()
+        val raw = try {
+            metaStore.getString(KEY)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            log.e(TAG, "read failed, treating as nothing disabled (all plugins enabled). key=$KEY", failure)
+            return emptySet()
+        }
+        if (raw == null) {
+            // 键从未写过 = 用户从未在本机改过任何插件开关 = 冷启动 → 采用**出厂默认停用集**。
+            return LinkedHashSet(factoryDisabledIds.filter { PluginEnablementCodec.isValidId(it) })
+        }
         val decoded = PluginEnablementCodec.decode(raw)
         if (decoded.droppedLineCount > 0) {
             log.w(TAG, "dropped ${decoded.droppedLineCount} malformed line(s); key=$KEY")
@@ -149,16 +178,6 @@ class PluginEnablementStoreImpl(
             if (next == current) return@withLock // 幂等：状态未变不写
             write(next)
         }
-    }
-
-    /** 读原始文本；任何失败按「没有任何插件被停用」处理（fail-safe），取消照常向上传播。 */
-    private suspend fun readRaw(): String? = try {
-        metaStore.getString(KEY)
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (failure: Throwable) {
-        log.e(TAG, "read failed, treating as nothing disabled (all plugins enabled). key=$KEY", failure)
-        null
     }
 
     /** 整体覆盖写；失败记日志后**吞掉**（本次设置不跨重启保留，但不抛给调用方）。 */

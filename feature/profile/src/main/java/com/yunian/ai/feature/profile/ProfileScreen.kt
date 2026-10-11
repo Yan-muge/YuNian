@@ -212,7 +212,10 @@ fun ProfileScreen(
             MenuItemData(AppIcons.Settings, stringResource(R.string.general_settings), stringResource(R.string.general_settings_desc), onGeneralSettingsClick),
             MenuItemData(AppIcons.Info, stringResource(R.string.about_app), stringResource(R.string.about_app_desc), onAboutClick)
         ))
-        Spacer(modifier = Modifier.height(80.dp))
+        // 底栏让位由 MainTabScreen 统一施加在 Pager 上（底栏高度 + 系统导航栏内边距），
+        // 这里只留滚动余量；原先写死的 80dp 既没算上系统导航栏内边距，
+        // 又会在统一让位后变成一大段空白。
+        Spacer(modifier = Modifier.height(24.dp))
     }
 
     if (showMoreSheet) {

@@ -77,9 +77,6 @@ class AppSettingsStore(context: Context) {
         private val SHOW_TYPING_SPINNER_KEY = booleanPreferencesKey("show_typing_spinner")
         private const val DEFAULT_SHOW_TYPING_SPINNER = false
 
-        /** 液态玻璃效果开关（默认关闭；启动时同步到 GlassEffectGate，主题设置页可切换） */
-        private val LIQUID_GLASS_ENABLED_KEY = booleanPreferencesKey("liquid_glass_enabled")
-        private const val DEFAULT_LIQUID_GLASS_ENABLED = false
         private val SEARCH_API_KEY_KEY = stringPreferencesKey("search_api_key")
         private const val DEFAULT_SEARCH_API_KEY = ""
 
@@ -217,16 +214,6 @@ class AppSettingsStore(context: Context) {
 
     suspend fun setShowReasoning(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[SHOW_REASONING_KEY] = enabled }
-    }
-
-    val liquidGlassEnabledFlow: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[LIQUID_GLASS_ENABLED_KEY] ?: DEFAULT_LIQUID_GLASS_ENABLED
-    }
-
-    suspend fun getLiquidGlassEnabled(): Boolean = liquidGlassEnabledFlow.first()
-
-    suspend fun setLiquidGlassEnabled(enabled: Boolean) {
-        dataStore.edit { prefs -> prefs[LIQUID_GLASS_ENABLED_KEY] = enabled }
     }
 
     val reasoningResponseFieldFlow: Flow<String> = dataStore.data.map { prefs ->

@@ -22,8 +22,6 @@
     <string name="theme_dark_desc">Eye-friendly dark style</string>
     <string name="theme_system">Follow System</string>
     <string name="theme_system_desc">Auto switch light/dark</string>
-    <string name="glass_effect_title">Liquid glass effect</string>
-    <string name="glass_effect_subtitle">Enable the glass-style visuals (recommended off on low-end devices)</string>
 
     <string name="settings_title">API Settings</string>
     <string name="settings_hint">Tap card to flip and configure API</string>

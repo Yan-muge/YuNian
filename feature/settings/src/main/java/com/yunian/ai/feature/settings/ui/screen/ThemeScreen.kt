@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,12 +48,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yunian.ai.uicommon.theme.ThemeViewModel
 import com.yunian.ai.uicommon.theme.ThemeMode
 import androidx.compose.foundation.isSystemInDarkTheme
-import com.yunian.ai.common.AppSettingsStore
-import com.yunian.ai.uicommon.component.glass.GlassEffectGate
-import androidx.compose.material3.Switch
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -147,86 +140,12 @@ fun ThemeScreen(
                     }
                 }
             )
-
-            GlassEffectCard(
-                cardColor = cardColor,
-                textPrimaryColor = textPrimaryColor,
-                dividerColor = dividerColor
-            )
         }
     }
 }
 
-/**
- * 液态玻璃效果开关（[GlassEffectGate]，默认关闭）。
- *
- * 双写：持久化到 [AppSettingsStore]（下次启动由 Application 同步加载）+ 直接写
- * [GlassEffectGate]（本次会话即时全局生效，无需重启）。
- * 硬件分级的 LOW 档强制禁用在各消费点（如聊天页 LocalChatGlassEnabled）做 AND 合成，
- * 本开关只承载用户语义。
- */
-@Composable
-private fun GlassEffectCard(
-    cardColor: Color,
-    textPrimaryColor: Color,
-    dividerColor: Color
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val settingsStore = remember {
-        AppSettingsStore(context.applicationContext)
-    }
-    val glassEnabled = GlassEffectGate.enabled
-    val shape = RoundedCornerShape(12.dp)
-    val surfaceColor = if (glassEnabled) cardColor.copy(alpha = 0.85f) else cardColor
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .drawGlass(
-                backdrop = LocalPageBackdrop.current,
-                shape = shape,
-                surfaceColor = surfaceColor
-            )
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = AppIcons.Settings2,
-            contentDescription = null,
-            tint = textPrimaryColor,
-            modifier = Modifier.size(26.dp)
-        )
-
-        Spacer(modifier = Modifier.width(16.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.glass_effect_title),
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 15.sp
-                ),
-                color = textPrimaryColor
-            )
-            Text(
-                text = stringResource(R.string.glass_effect_subtitle),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 12.sp
-                ),
-                color = dividerColor
-            )
-        }
-
-        Switch(
-            checked = glassEnabled,
-            onCheckedChange = { checked ->
-                GlassEffectGate.enabled = checked
-                scope.launch { settingsStore.setLiquidGlassEnabled(checked) }
-            }
-        )
-    }
-}
+// 「液态玻璃效果」开关已下线（界面已整体改为微信风格实底 surface，该开关不再产生任何
+// 视觉差异）。GlassEffectGate 保持默认 false，各消费方走既有的纯色降级分支。
 
 @Composable
 fun ThemeOptionCard(
@@ -316,8 +235,4 @@ fun ThemeOptionCard(
             }
         }
     }
-}
-
-private fun Color.luminance(): Float {
-    return (0.299f * red + 0.587f * green + 0.114f * blue)
 }

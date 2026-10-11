@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -226,15 +224,14 @@ fun HomeScreen(
                 else -> {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    // 底部导航（FloatingGlassBottomNav）是覆盖在内容之上的浮层，
-                    // 其自身已含 navigationBars 内边距；内容必须让出「导航高度 + 手势条」，
-                    // 否则联系人多时最后一条会被导航栏遮住（真机问题）。
+                    // 底栏（FloatingGlassBottomNav）的让位已由 MainTabScreen 统一施加在 Pager 上
+                    // （底栏自身高度 + 系统导航栏内边距），因此这里只留一点滚动余量，
+                    // 不再重复让位——两处各让一次会得到一大段空白。
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         end = 12.dp,
                         top = 8.dp,
-                        bottom = 80.dp +
-                            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                        bottom = 16.dp
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {

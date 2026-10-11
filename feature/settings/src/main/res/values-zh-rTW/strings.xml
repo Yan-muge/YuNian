@@ -22,8 +22,6 @@
     <string name="theme_dark_desc">護眼的暗色風格</string>
     <string name="theme_system">跟隨系統</string>
     <string name="theme_system_desc">自動切換淺色/深色</string>
-    <string name="glass_effect_title">液態玻璃效果</string>
-    <string name="glass_effect_subtitle">啟用玻璃質感的介面視覺（低階裝置建議關閉）</string>
 
     <string name="settings_title">API 設置</string>
     <string name="settings_hint">點擊卡片翻轉配置API</string>

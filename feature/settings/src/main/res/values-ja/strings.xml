@@ -22,8 +22,6 @@
     <string name="theme_dark_desc">目に優しいダークスタイル</string>
     <string name="theme_system">システムに従う</string>
     <string name="theme_system_desc">自動でライト/ダーク切替</string>
-    <string name="glass_effect_title">リキッドガラス効果</string>
-    <string name="glass_effect_subtitle">ガラス風の外観を有効にする（低スペック端末ではオフ推奨）</string>
 
     <string name="settings_title">API設定</string>
     <string name="settings_hint">カードをタップしてAPIを設定</string>

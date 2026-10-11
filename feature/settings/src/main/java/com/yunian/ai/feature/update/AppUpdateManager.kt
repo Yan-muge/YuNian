@@ -100,6 +100,13 @@ class AppUpdateManager(private val context: Context) {
         }
     }
 
+    /**
+     * 当前安装包的 versionCode。
+     *
+     * 触发方（版本比对）已随 [checkForUpdates] 的本地化一并停用，故当前没有调用点。
+     * 保留而不删除：它是 [getCurrentVersionName] 的对称访问器，恢复在线检查时是必需的读口。
+     */
+    @Suppress("unused")
     fun getCurrentVersionCode(): Long {
         return try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -114,53 +121,31 @@ class AppUpdateManager(private val context: Context) {
         }
     }
 
+    /**
+     * 检查更新。
+     *
+     * ## 本版本起：不再请求云端
+     *
+     * 全部「检查版本更新」入口（启动时的静默检查、「关于应用 → 检查更新」页的手动检查）
+     * 都走本方法，因此在这里**单点**收敛：一律返回 [UpdateCheckState.LATEST]，
+     * 一次性置空 [updateInfo] / [showUpdateDialog]，一个字节都不发往更新服务。
+     *
+     * 为什么单点收敛而不是逐个入口删掉：入口有三个（`MainActivity` 启动检查、
+     * `CheckUpdateScreen` 手动检查、`MainScreen` 的更新弹窗消费），删入口会留下
+     * 「有的地方还能弹更新、有的地方不能」的不一致；而这里是它们唯一的下游，
+     * 改这里等于同时改全部入口，且**结构上不可能**再有漏网的网络检查。
+     *
+     * ## 与下载链路的关系
+     *
+     * 本方法不再产出 [UpdateInfo] → 下载 / 安装分支（[startDownload] / [installApk]）
+     * 不再被任何入口触发。相关实现按「不删能力、只停入口」保留：若将来恢复在线检查，
+     * 只需还原本方法体，签名下载、断点续传、SHA-256 校验与安装通知都仍然是完整的。
+     * 因此 `refreshSignedUrls()` 也保持原样（仅在下载链路内部可达）。
+     */
     suspend fun checkForUpdates() {
-        _updateCheckState.value = UpdateCheckState.CHECKING
-        try {
-            withContext(Dispatchers.IO) {
-                val plain = requestEncryptedManifest() ?: run {
-                    _updateCheckState.value = UpdateCheckState.ERROR
-                    return@withContext
-                }
-                val manifest = try {
-                    json.decodeFromString<UpdateManifest>(plain)
-                } catch (e: Exception) {
-                    _updateCheckState.value = UpdateCheckState.ERROR
-                    return@withContext
-                }
-
-                val hasUpdate = if (manifest.versionCode > 0 && getCurrentVersionCode() > 0) {
-                    manifest.versionCode > getCurrentVersionCode()
-                } else {
-                    manifest.versionName.isNotBlank() &&
-                        compareVersion(manifest.versionName, getCurrentVersionName()) > 0
-                }
-
-                if (hasUpdate) {
-                    _updateInfo.value = UpdateInfo(
-                        versionName = manifest.versionName,
-                        versionCode = manifest.versionCode,
-                        updateUrl = manifest.apkUrl,
-                        updateLog = manifest.updateLog,
-                        fileSize = manifest.apkSize,
-                        publishDate = manifest.publishDate,
-                        isForceUpdate = manifest.forceUpdate,
-                        sha256 = manifest.apkSha256,
-                        mirrors = manifest.mirrors,
-                        urlExpiresAt = manifest.apkUrlExpiresAt
-                    )
-                    _updateCheckState.value = UpdateCheckState.AVAILABLE
-                    val prefs = context.getSharedPreferences("update_prefs", Context.MODE_PRIVATE)
-                    if (prefs.getString("ignored_version", "") != manifest.versionName) {
-                        _showUpdateDialog.value = true
-                    }
-                } else {
-                    _updateCheckState.value = UpdateCheckState.LATEST
-                }
-            }
-        } catch (e: Exception) {
-            _updateCheckState.value = UpdateCheckState.ERROR
-        }
+        _updateCheckState.value = UpdateCheckState.LATEST
+        _updateInfo.value = null
+        _showUpdateDialog.value = false
     }
 
     /**
@@ -544,6 +529,14 @@ class AppUpdateManager(private val context: Context) {
         _showUpdateDialog.value = false
     }
 
+    /**
+     * 语义化版本号比较（`a > b` → 1，`a < b` → -1，相等 → 0）。
+     *
+     * 唯一调用点是 [checkForUpdates] 里的「清单版本 vs 本机版本」判定，该判定已随
+     * 检查本地化移除，故当前没有调用点。保留而不删除：它是版本比对的能力本体，
+     * 恢复在线检查时原样可用（不删能力、只停入口）。
+     */
+    @Suppress("unused")
     private fun compareVersion(v1: String, v2: String): Int {
         val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
         val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }

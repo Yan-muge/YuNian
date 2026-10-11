@@ -4,7 +4,11 @@ import android.app.Activity
 import com.yunian.ai.uicommon.utils.PageTransitions
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
@@ -431,6 +435,15 @@ private fun MainTabScreen(
     onLastTabPageChanged: (Int) -> Unit,
     backdrop: LayerBackdrop?
 ) {
+    // 底栏是**覆盖层**（Box 内 align BottomCenter），它不会把内容顶上去；
+    // 因此这里统一让 Pager 让出「底栏自身高度 + 系统导航栏内边距」。
+    //
+    // 为什么不留给各 Tab 页自己写：HomeScreen / ProfileScreen / ContactsScreen 曾各写各的
+    // 底部留白（80dp / 80dp / 0dp），ProfileScreen 漏掉了系统导航栏内边距，导致
+    // 「关于应用」被底栏盖住（真机问题）。让位高度只有底栏自己知道，答案就只应有一处。
+    val bottomNavTotalHeight = BottomNavBarHeight +
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -443,7 +456,7 @@ private fun MainTabScreen(
             pagerState = pagerState,
             navController = navController,
             openCompanionChat = openCompanionChat,
-            modifier = Modifier
+            modifier = Modifier.padding(bottom = bottomNavTotalHeight)
         )
         FloatingGlassBottomNav(
             items = bottomNavItems,
