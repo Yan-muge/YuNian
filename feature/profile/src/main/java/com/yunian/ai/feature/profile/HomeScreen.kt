@@ -290,7 +290,8 @@ fun HomeTabBar(
     val colorScheme = AppTheme.colors
     val isDark = colorScheme.background.luminance() < 0.5f
     val unselectedContent = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF8A829A)
-    val selectedContent = Color(0xFF191919)
+    // 选中文字用中饱和紫，在半透明淡紫底上呈现恋语参考图的紫字效果
+    val selectedContent = Color(0xFF8E7CC3)
     val selectedBg = TabSelectedBackground
 
     val tabs = HomeTab.values().toList()
@@ -301,30 +302,37 @@ fun HomeTabBar(
     )
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         tabs.forEach { tab ->
             val selected = tab == selectedTab
-            Box(
+            // 恋语风格：胶囊撑满格子宽度（留少量边距），半透明淡紫底，整体更高
+                Box(
                 modifier = Modifier
                     .weight(1f)
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(if (selected) selectedBg else Color.Transparent)
+                    .background(
+                        if (selected) selectedBg.copy(alpha = 0.55f) else Color.Transparent
+                    )
                     .clickable(
                         interactionSource = null,
                         indication = null,
                         onClick = { onTabSelected(tab) }
                     )
                     .semantics { this.selected = selected }
-                    .padding(horizontal = 16.dp, vertical = 7.dp),
+                    .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = labels[tab] ?: "",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        fontSize = 14.sp
+                        fontSize = 15.sp
                     ),
                     color = if (selected) selectedContent else unselectedContent
                 )

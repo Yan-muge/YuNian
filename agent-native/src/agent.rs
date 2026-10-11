@@ -25,6 +25,20 @@ const MAX_TOOL_CALLS_PER_TURN: u32 = 64;
 /// 单回合气泡文本总字符上限（超过即终止，防止无限产出）
 const MAX_BUBBLE_CHARS_PER_TURN: usize = 8000;
 
+/// 单回合气泡条数软上限（dima-need 任务3 修复）：
+/// 达到后注入收尾提示，引导模型立即用一条简短气泡自然收尾，杜绝「切割十几条 + 自问自答」。
+/// 软上限 = 注入提示而非硬终止，保留模型在合理场景（用户明确要求连发/讲故事）下的正常连发能力。
+const BUBBLE_SOFT_CAP: u32 = 4;
+
+/// 触发气泡条数软上限后的收尾提示（`_agent_preserve_system` 保留型 system 消息，发送前清除标记）。
+///
+/// ⚠️ 措辞纪律（防「编排状态自述」泄漏）：这是**系统控制信令**，不是台词。
+/// 真机实测（qwen3.7-plus）：模型会把「请立即停止调用工具，直接结束回合，等待用户回复」
+/// 这类祈使句**原文复述成气泡**（如「已经回复完了…等用户继续聊」）。故一律改为
+/// 「结构化状态 + 明确声明这不是你该说的话」，不再写任何可被当成台词的祈使句。
+const BUBBLE_WRAP_UP_HINT: &str =
+    "【系统控制信令】{\"status\":\"bubble_soft_cap_reached\"}。这是系统给你的内部控制信号，不是你该对用户说的话；立即结束本轮，不要再输出任何气泡或文本。";
+
 /// 工具类别（用于确认策略等治理）
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum ToolCategory {
@@ -327,7 +341,7 @@ impl AgentToolRegistry {
         vec![
             ToolDefinition {
                 name: "emit_segmented".to_string(),
-                description: "将一段较长的回复按标点分段输出为多条短气泡，模拟真人连发。触发条件：当回复包含多句话、需要拆成多条气泡逐条发送时使用。约束：短回复请直接用 emit_bubble；本工具只用于文本分段，不发送表情包。".to_string(),
+                description: "将一段较长的回复按标点分段输出为多条短气泡，模拟真人连发。触发条件：当回复确实包含多句、且用户明确要求分开说/一句一句发/讲故事时使用。约束：短回复请直接用 emit_bubble，不要为分段而分段；本工具只用于文本分段，不发送表情包；一次分段通常 2~4 条，切忌把一句正常的话拆碎。".to_string(),
                 parameters_json: r#"{"type":"object","properties":{"text":{"type":"string","minLength":1,"description":"要分段的完整文本，至少 1 个字符"},"mode":{"type":"string","enum":["simple","group"],"description":"分段模式：simple=按语义分块，group=逐句拆分。默认 simple"}},"required":["text"],"additionalProperties":false}"#.to_string(),
                 category: ToolCategory::Chat,
                 toolsets: vec!["chat".to_string()],
@@ -343,7 +357,7 @@ impl AgentToolRegistry {
             },
             ToolDefinition {
                 name: "emit_bubble".to_string(),
-                description: "输出一条独立气泡消息。触发条件：需要以单条气泡发送一句完整的话时使用；需要多条时多次调用。约束：内容超过一句或多句连发请用 emit_segmented 分段。".to_string(),
+                description: "输出一条独立气泡消息。触发条件：需要以单条气泡发送一句完整的话时使用。约束：内容超过一句或多句连发请用 emit_segmented；一轮对话通常 1~3 条气泡即可，切忌连发十几条或自问自答地续写；同一轮最多问一个问题，禁止连珠炮式连续抛出多个问题轰炸用户，问完即停；用户未回复前，严禁再补任何收尾性气泡（如「我等着」「你说吧」），把说话机会留给用户。".to_string(),
                 parameters_json: r#"{"type":"object","properties":{"text":{"type":"string","minLength":1,"description":"气泡文本内容，至少 1 个字符"}},"required":["text"],"additionalProperties":false}"#.to_string(),
                 category: ToolCategory::Chat,
                 toolsets: vec!["chat".to_string()],
@@ -368,17 +382,35 @@ impl AgentToolRegistry {
             .and_then(|v| v.as_str())
             .unwrap_or("simple");
         let split_mode = if mode == "group" { SplitMode::Group } else { SplitMode::Simple };
+        // 硬上限：与 builtin_emit_bubble 同规则——达到上限直接拒绝；未到上限也只允许
+        // 补到剩余额度为止，防止 emit_segmented 一次拆出十几条绕过限制。
+        let emitted = events.iter().filter(|e| e.kind == "bubble").count() as u32;
+        if emitted >= BUBBLE_SOFT_CAP {
+            return format!(
+                "{{\"status\":\"rejected\",\"reason\":\"bubble_cap_reached\",\"limit\":{}}}",
+                BUBBLE_SOFT_CAP
+            );
+        }
+        let remaining = (BUBBLE_SOFT_CAP - emitted) as usize;
         let segments = agent_segment(text.clone(), split_mode);
+        let mut pushed = 0usize;
         for seg in segments {
             if !seg.is_empty() {
+                if pushed >= remaining {
+                    break;
+                }
                 events.push(AgentEvent {
                     kind: "bubble".to_string(),
                     text: seg,
                     extra: String::new(),
                 });
+                pushed += 1;
             }
         }
-        format!("已将回复分段输出为 {} 条气泡", events.iter().filter(|e| e.kind == "bubble").count())
+        format!(
+            "{{\"status\":\"ok\",\"emitted\":{}}}",
+            events.iter().filter(|e| e.kind == "bubble").count()
+        )
     }
 
     fn builtin_send_sticker(
@@ -390,7 +422,7 @@ impl AgentToolRegistry {
     ) -> String {
         let parsed: serde_json::Value = match serde_json::from_str(arguments) {
             Ok(v) => v,
-            Err(_) => return "错误：表情包参数必须是合法 JSON".to_string(),
+            Err(_) => return "{\"status\":\"error\",\"reason\":\"invalid_json\"}".to_string(),
         };
         // ① 解析 tags 数组（1~3 个），逐个 normalize
         let raw_tags: Vec<String> = parsed
@@ -404,10 +436,10 @@ impl AgentToolRegistry {
             .filter(|t| !t.is_empty())
             .collect();
         if tags.is_empty() {
-            return "错误：tags 缺失或清洗后为空（需为 1~3 个情绪标签，如：开心、委屈巴巴、抱抱）".to_string();
+            return "{\"status\":\"error\",\"reason\":\"tags_empty\",\"hint\":\"需要 1~3 个情绪标签，如 开心/委屈巴巴/抱抱\"}".to_string();
         }
         if tags.len() > 3 {
-            return "错误：tags 最多 3 个，请按相关性从高到低选择 1~3 个".to_string();
+            return "{\"status\":\"error\",\"reason\":\"too_many_tags\",\"max\":3}".to_string();
         }
         // ② 逐个精确匹配可用标签（可用标签 = Kotlin StickerManager 注入的 available_sticker_tags）
         let available: Vec<String> = ctx
@@ -454,14 +486,18 @@ impl AgentToolRegistry {
                     } else {
                         pick_tags.join(",")
                     };
-                    format!("已发送表情包：{display}（标签：{}）", pick_tags.join(","))
+                    serde_json::json!({
+                        "status": "ok",
+                        "sticker": display,
+                        "tags": pick_tags,
+                    })
+                    .to_string()
                 }
                 None => {
                     if !allow_passthrough {
                         // 表情库为空且预选不到：绝不放行「默认表情包」，
                         // 直接让模型改用文字表达（用户可见且不会误发内置图）。
-                        return "当前没有任何可用表情包（表情库为空），请不要发送表情包，改用文字气泡表达情绪。"
-                            .to_string();
+                        return "{\"status\":\"rejected\",\"reason\":\"sticker_library_empty\"}".to_string();
                     }
                     // 旧行为：事件透传（text=命中标签），Kotlin 落地时按标签采样兜底
                     events.push(AgentEvent {
@@ -469,7 +505,7 @@ impl AgentToolRegistry {
                         text: fallback_text.to_string(),
                         extra: format!("companion_id={:?};group_id={:?}", ctx.companion_id, ctx.group_id),
                     });
-                    format!("已发送表情包：{fallback_text}")
+                    serde_json::json!({ "status": "ok", "sticker": fallback_text }).to_string()
                 }
             }
         };
@@ -488,12 +524,13 @@ impl AgentToolRegistry {
         sorted.sort();
         sorted.dedup();
         let top30: Vec<String> = sorted.iter().take(30).cloned().collect();
-        let available_str = if top30.is_empty() {
-            String::new()
-        } else {
-            format!("。可用标签: [{}]（Top-30）", top30.join(", "))
-        };
-        format!("tags '{}' 无匹配{available_str}，请从可用标签中选择或改用文字气泡", tags.join(","))
+        serde_json::json!({
+            "status": "rejected",
+            "reason": "sticker_no_match",
+            "requested": tags,
+            "available": top30,
+        })
+        .to_string()
     }
 
     /// 内部回调：让 Kotlin 按标签预选表情包（`ToolHost.execute("sticker_pick", ...)`）。
@@ -552,6 +589,16 @@ impl AgentToolRegistry {
         arguments: &str,
         events: &mut Vec<AgentEvent>,
     ) -> String {
+        // 硬上限（区别于 BUBBLE_WRAP_UP_HINT 软提示）：本轮气泡数达到 BUBBLE_SOFT_CAP 后，
+        // 直接拒绝执行并要求模型立即结束回合——软提示可能被模型无视（亲密场景实测连发 8+ 条），
+        // 工具层硬拒绝不截断已发内容，但让「再发一条」在物理上不可能。
+        let emitted = events.iter().filter(|e| e.kind == "bubble").count() as u32;
+        if emitted >= BUBBLE_SOFT_CAP {
+            return format!(
+                "{{\"status\":\"rejected\",\"reason\":\"bubble_cap_reached\",\"limit\":{}}}",
+                BUBBLE_SOFT_CAP
+            );
+        }
         let parsed: serde_json::Value = serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
         let text = parsed.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if text.is_empty() {
@@ -562,7 +609,7 @@ impl AgentToolRegistry {
             text,
             extra: String::new(),
         });
-        "已输出气泡".to_string()
+        "{\"status\":\"ok\",\"emitted\":1}".to_string()
     }
 
     /// 执行工具：先查内置，再查全局注册，最后查会话级（均走 ToolHost）
@@ -1090,8 +1137,20 @@ impl AgentRuntime {
 
         let max_rounds = if request.max_rounds == 0 { 1 } else { request.max_rounds };
 
-        // 用户上下文前缀（用户 L0 动态环境 + L1 WORKING 短期记忆）：仅第一轮注入最新用户消息。
-        // 模型感知 [当前时间] / [对话轮数] / [近期记忆]，与系统提示词 L0-L5 互为镜像。
+        // 运行时上下文（L0 动态环境 + L1 WORKING 短期记忆）注入。
+        //
+        // ⚠️ 历史教训（2026-10-11 截图三「上下文丢失 / AI 自说自话」）：此前把该前缀
+        // **拼接进最后一条 user 消息的 content**，造成两个后果：
+        //   ① 编排层元数据住进了「用户原话」的通道 —— 模型会把 [当前时间] 当作
+        //      「用户说的话」复述出来（与系统提示词回显同一条病根：内部层无隔离）；
+        //   ② 一旦用户原话缺失/为空，元数据就**顶替**成了这一轮的用户回合，
+        //      模型只能按时间自行续聊，表现为「才聊几句就丢了上下文」。
+        //
+        // 现改为**独立 system 消息**（带 `_agent_preserve_system` 保留标记），紧邻最后一条
+        // user 消息之前插入：与用户原话分属不同 role，从通道上物理隔离。位置仍在序列尾部，
+        // 不破坏前缀缓存（人设 system 依旧在 messages[0]）。
+        // 该标记由 gateway 在发送前清除（OpenAI：`replace_persona_system`）或折进
+        // `system` 字段（Anthropic：`build_anthropic_body`），不会泄漏到上游协议。
         if let Some(orchestrator) = &self.orchestrator {
             let history_rounds = messages
                 .iter()
@@ -1104,20 +1163,28 @@ impl AgentRuntime {
                 history_rounds,
                 options,
             );
-            if !prefix.trim().is_empty() {
-                if let Some(idx) = messages
-                    .iter()
-                    .rposition(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
-                {
-                    let content = messages[idx]
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    messages[idx]["content"] =
-                        serde_json::Value::String(format!("{}\n\n{}", prefix.trim_end(), content));
-                }
-            }
+            inject_runtime_context(&mut messages, &prefix);
+        }
+
+        // fail-closed 守卫（与上面的通道隔离配套）：本轮必须携带**有实质内容**的用户消息。
+        // 用户通道现在只承载用户原话，因此「最后一条 user 消息为空」只可能意味着历史组装 /
+        // 快照出了问题（用户原话没进来）。此时**绝不发请求** —— 否则模型会对着一个空回合
+        // 自由发挥、自说自话；改为以 error 显式结束回合，把问题暴露给上层（用户看到重试）。
+        if let Some(reason) = detect_unusable_user_turn(&messages) {
+            crate::agentlog::warn("agent", &format!("fail-closed: {reason}"));
+            return AgentTurnResult {
+                events: Vec::new(),
+                final_text: String::new(),
+                rounds_used: 0,
+                finished_reason: "error".to_string(),
+                error: Some(reason),
+            };
+        }
+        // 可观测性：把「本轮实际交给模型的最后一条 user 消息」前 80 字落日志。
+        // 此前 dispatch log 只记 Kotlin 侧 querySummary，无法回答「模型到底收到了什么」。
+        if let Some(last_user) = last_user_message_text(&messages) {
+            let preview: String = last_user.chars().take(80).collect();
+            crate::agentlog::info("agent", &format!("turn user message: {preview}"));
         }
 
         let mut rounds_used = 0u32;
@@ -1126,6 +1193,9 @@ impl AgentRuntime {
         let mut last_status_text = String::new();
         let mut tool_calls_used: u32 = 0;
         let mut text_chars_total: u32 = 0;
+        // 累计气泡条数（dima-need 任务3）：达到 BUBBLE_SOFT_CAP 后注入收尾提示，杜绝连发失控。
+        let mut bubble_count: u32 = 0;
+        let mut bubble_wrap_up_injected = false;
         let mut last_finish_reason = String::new();
         // send_sticker 同轮连续无匹配重试上限（2 次；达到后注入 system 消息阻止继续尝试）
         let mut sticker_fail_streak: u32 = 0;
@@ -1348,6 +1418,7 @@ impl AgentRuntime {
 
                     let chars_before = bubble_chars(&events);
                     let sticker_before = events.iter().filter(|e| e.kind == "sticker").count();
+                    let bubble_before = events.iter().filter(|e| e.kind == "bubble").count() as u32;
                     // ── 确认治理（Approval）──
                     // Commerce 类工具默认 RequireConfirm：未批准/未拒绝时停止回合，产出 confirm_request 事件，
                     // finished_reason="confirm_pending"；Kotlin 确认后经 approve_tool/reject_tool 授权，
@@ -1404,6 +1475,21 @@ impl AgentRuntime {
                     }
                     tool_calls_used += 1;
                     text_chars_total += bubble_chars(&events).saturating_sub(chars_before);
+                    bubble_count += events.iter().filter(|e| e.kind == "bubble").count() as u32
+                        - bubble_before;
+                    // 气泡条数软上限（dima-need 任务3）：达到阈值后注入一次收尾提示，
+                    // 引导模型立即自然收尾，杜绝「切割十几条 + 自问自答」的连发失控。
+                    // 软上限仅提示、不硬终止（保留用户明确要求连发/讲故事场景的正常能力），
+                    // 硬兜底仍由 MAX_TOOL_CALLS_PER_TURN / MAX_BUBBLE_CHARS_PER_TURN 承担。
+                    if bubble_count >= BUBBLE_SOFT_CAP && !bubble_wrap_up_injected {
+                        bubble_wrap_up_injected = true;
+                        messages.push(serde_json::json!({
+                            "type": "system",
+                            "role": "system",
+                            "_agent_preserve_system": true,
+                            "content": BUBBLE_WRAP_UP_HINT,
+                        }));
+                    }
 
                     // 回合级工具调用预算（P1-5）：达到上限立即终止，防止失控循环
                     if tool_calls_used >= MAX_TOOL_CALLS_PER_TURN {
@@ -1421,7 +1507,7 @@ impl AgentRuntime {
                     // （设计文档 §6：同轮失败重试上限 2 次，模型应修正 tags 或放弃改发文字）。
                     if name == "send_sticker" {
                         let sticker_pushed = events.iter().filter(|e| e.kind == "sticker").count() > sticker_before;
-                        if !sticker_pushed && result_text.contains("无匹配") {
+                        if !sticker_pushed && result_text.contains("sticker_no_match") {
                             sticker_fail_streak += 1;
                             if sticker_fail_streak >= STICKER_FAIL_CAP {
                                 messages.push(serde_json::json!({
@@ -1429,7 +1515,7 @@ impl AgentRuntime {
                                     "role": "system",
                                     "_agent_preserve_system": true,
                                     "content": format!(
-                                        "系统提示：你已连续 {STICKER_FAIL_CAP} 次发送表情包失败（标签无法匹配可用表情包）。请立即停止调用 send_sticker，改用文字气泡（emit_bubble）回复用户，或改用文字描述情绪。"
+                                        "【系统控制信令】{{\"status\":\"blocked\",\"reason\":\"sticker_repeated_failure\",\"failed\":{STICKER_FAIL_CAP}}}。这是系统给你的内部信号，不是你该对用户说的话；立即停止调用 send_sticker，改用 emit_bubble 输出文字气泡。"
                                     ),
                                 }));
                             }
@@ -1677,6 +1763,67 @@ fn first_non_system_index(messages: &[serde_json::Value]) -> usize {
 
 fn role_of(m: &serde_json::Value) -> &str {
     m.get("role").and_then(|r| r.as_str()).unwrap_or("")
+}
+
+/// 把运行时上下文（L0 动态环境 + L1 短期记忆）作为**独立 system 消息**注入到
+/// 最后一条 `role=user` 消息之前，与用户原话所在通道物理隔离。
+///
+/// 为什么不是「拼进 user 消息」：见 `run_turn_inner` 中的历史教训注释
+/// （2026-10-11 截图三：元数据粘在 user 上 → 既可被复述，又会在原话缺失时顶替成用户回合）。
+///
+/// 返回 `true` 表示已注入；无 user 消息（或前缀为空）时不改动 `messages`，返回 `false`。
+fn inject_runtime_context(messages: &mut Vec<serde_json::Value>, prefix: &str) -> bool {
+    if prefix.trim().is_empty() {
+        return false;
+    }
+    let idx = match messages.iter().rposition(|m| role_of(m) == "user") {
+        Some(i) => i,
+        None => return false,
+    };
+    messages.insert(
+        idx,
+        serde_json::json!({
+            "role": "system",
+            "content": prefix.trim_end(),
+            "_agent_preserve_system": true,
+        }),
+    );
+    true
+}
+
+/// 取最后一条 `role=user` 消息的 content（无 user 消息时返回 None）。
+fn last_user_message_text(messages: &[serde_json::Value]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| role_of(m) == "user")
+        .map(|m| {
+            m.get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+}
+
+/// fail-closed 守卫判据（P0：上下文丢失）。
+///
+/// 返回 `Some(错误说明)` 表示本轮**不应发出请求**，须以 error 结束回合。
+///
+/// 判据刻意保持**精确、不误伤**：
+/// - 仅在「存在 user 消息，且**最后一条** user 消息 content 为空白」时命中。
+///   这是「用户原话未进入本轮请求」的直接信号 —— 若不拦截，模型会对着空回合自行发挥。
+/// - 「完全没有 user 消息」**不算**命中：交由上游既有流程处理，避免误伤未来可能出现
+///   的纯指令型回合（实际上 chat / 主动消息 / 后台回复三条链路都必然携带 user 消息）。
+fn detect_unusable_user_turn(messages: &[serde_json::Value]) -> Option<String> {
+    let last_user = last_user_message_text(messages)?;
+    if last_user.trim().is_empty() {
+        Some(
+            "本轮未取到用户消息内容（历史上下文可能不完整），已中止请求以避免模型脱离上下文自行发挥，请重试"
+                .to_string(),
+        )
+    } else {
+        None
+    }
 }
 
 fn has_tool_calls(m: &serde_json::Value) -> bool {
@@ -2005,7 +2152,7 @@ mod tests {
         );
         assert_eq!(
             tool_msgs[0].get("content").and_then(|v| v.as_str()),
-            Some("已输出气泡"),
+            Some("{\"status\":\"ok\",\"emitted\":1}"),
             "工具结果应回灌: {second_body}"
         );
     }
@@ -2023,6 +2170,65 @@ mod tests {
             &mut events,
         );
         assert!(events.iter().filter(|e| e.kind == "bubble").count() >= 2, "{out} {events:?}");
+    }
+
+    /// 气泡硬上限：本轮气泡数达到 BUBBLE_SOFT_CAP 后，emit_bubble / emit_segmented
+    /// 必须拒绝执行（返回错误、不产出事件），杜绝亲密场景等连发失控。
+    #[test]
+    fn bubble_hard_cap_rejects_when_limit_reached() {
+        let reg = AgentToolRegistry::new();
+        let ctx = ToolContext::default();
+        let mut events = Vec::new();
+
+        // 先灌满 BUBBLE_SOFT_CAP 条
+        for i in 0..BUBBLE_SOFT_CAP {
+            let out = AgentToolRegistry::builtin_emit_bubble(
+                &reg, &ctx, &NoopHost,
+                format!(r#"{{"text":"第{}条"}}"#, i + 1).as_str(),
+                &mut events,
+            );
+            assert_eq!(out, "{\"status\":\"ok\",\"emitted\":1}", "{out}");
+        }
+        assert_eq!(events.iter().filter(|e| e.kind == "bubble").count(), BUBBLE_SOFT_CAP as usize);
+
+        // 再发 → 拒绝，不产出事件
+        let out = AgentToolRegistry::builtin_emit_bubble(
+            &reg, &ctx, &NoopHost, r#"{"text":"第5条"}"#, &mut events,
+        );
+        assert!(out.contains("bubble_cap_reached"), "{out}");
+        assert_eq!(events.iter().filter(|e| e.kind == "bubble").count(), BUBBLE_SOFT_CAP as usize);
+
+        // emit_segmented 同样拒绝
+        let out2 = AgentToolRegistry::builtin_emit_segmented(
+            &reg, &ctx, &NoopHost,
+            r#"{"text":"一句。两句。三句。四句。五句。"}"#, &mut events,
+        );
+        assert!(out2.contains("bubble_cap_reached"), "{out2}");
+        assert_eq!(events.iter().filter(|e| e.kind == "bubble").count(), BUBBLE_SOFT_CAP as usize);
+    }
+
+    /// emit_segmented 不得超过剩余额度：已有 3 条时，一次分段最多再补 1 条。
+    #[test]
+    fn segmented_respects_remaining_quota() {
+        let reg = AgentToolRegistry::new();
+        let ctx = ToolContext::default();
+        let mut events = Vec::new();
+        for i in 0..3 {
+            AgentToolRegistry::builtin_emit_bubble(
+                &reg, &ctx, &NoopHost,
+                format!(r#"{{"text":"第{}条"}}"#, i + 1).as_str(),
+                &mut events,
+            );
+        }
+        let out = AgentToolRegistry::builtin_emit_segmented(
+            &reg, &ctx, &NoopHost,
+            r#"{"text":"甲。乙。丙。丁。"}"#, &mut events,
+        );
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "bubble").count(),
+            BUBBLE_SOFT_CAP as usize,
+            "{out}"
+        );
     }
 
     /// 空表情库（可用标签为空）且预选失败 → **绝不产出 sticker 事件**。
@@ -2043,7 +2249,7 @@ mod tests {
         );
         assert!(events.is_empty(), "空库不得产出 sticker 事件: {events:?}");
         assert!(
-            out.contains("表情库为空") || out.contains("不要发送表情包"),
+            out.contains("sticker_library_empty"),
             "应明确告知模型没有表情包: {out}"
         );
     }
@@ -2079,13 +2285,13 @@ mod tests {
             r#"{"tags":["！！！","。。。"]}"#,
             &mut events2,
         );
-        assert!(out2.starts_with("错误"), "{out2}");
+        assert!(out2.contains("tags_empty"), "{out2}");
         assert!(events2.is_empty(), "{events2:?}");
 
         // 缺失 tags → 错误返回
         let mut events3 = Vec::new();
         let out3 = AgentToolRegistry::builtin_send_sticker(&reg, &ctx, &NoopHost, r#"{}"#, &mut events3);
-        assert!(out3.starts_with("错误"), "{out3}");
+        assert!(out3.contains("tags_empty"), "{out3}");
         assert!(events3.is_empty(), "{events3:?}");
 
         // 超过 3 个 tag → 错误返回
@@ -2097,7 +2303,7 @@ mod tests {
             r#"{"tags":["a","b","c","d"]}"#,
             &mut events4,
         );
-        assert!(out4.starts_with("错误"), "{out4}");
+        assert!(out4.contains("too_many_tags"), "{out4}");
         assert!(events4.is_empty(), "{events4:?}");
 
         // 超长 tag 截断到 20 字符
@@ -2158,7 +2364,7 @@ mod tests {
             &mut events3,
         );
         assert!(events3.is_empty(), "{events3:?}");
-        assert!(out3.contains("无匹配"), "{out3}");
+        assert!(out3.contains("sticker_no_match"), "{out3}");
         assert!(out3.contains("开心"), "报告应含可用标签: {out3}");
         assert!(out3.contains("抱抱"), "报告应含可用标签: {out3}");
     }
@@ -2204,7 +2410,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            all_system.contains("连续 2 次发送表情包失败"),
+            all_system.contains("sticker_repeated_failure"),
             "达到重试上限应注入 system 阻止消息: {all_system}"
         );
         assert!(
@@ -2980,5 +3186,112 @@ mod tests {
         assert_eq!(result.finished_reason, "completed", "{:?}", result.error);
         assert!(result.events.iter().any(|e| e.kind == "bubble" && e.text == "第一句"), "工具产出应保留");
         runner.set_mock_transport(vec![]);
+    }
+
+    // ── P0：运行时上下文与用户通道隔离（2026-10-11 截图三「上下文丢失」根因） ──
+
+    /// 运行时上下文必须以**独立 system 消息**注入，且**不得**改动用户原话。
+    #[test]
+    fn runtime_context_injected_as_separate_system_message() {
+        let mut messages = vec![
+            serde_json::json!({"role": "user", "content": "在吗"}),
+        ];
+        let injected = inject_runtime_context(&mut messages, "[当前时间] 2026-10-11 15:58:00\n[对话轮数] 12\n");
+        assert!(injected, "有 user 消息时应注入");
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        // 注入体是独立 system 消息，带内部保留标记
+        assert_eq!(role_of(&messages[0]), "system", "{messages:?}");
+        assert_eq!(messages[0]["_agent_preserve_system"], serde_json::json!(true));
+        assert!(messages[0]["content"].as_str().unwrap().contains("[当前时间]"));
+        // 用户原话一字未改（此前缺陷：前缀被拼接到这里）
+        assert_eq!(role_of(&messages[1]), "user", "{messages:?}");
+        assert_eq!(messages[1]["content"], serde_json::json!("在吗"));
+    }
+
+    /// 注入位置：紧邻**最后一条** user 消息之前（旧的历史 user 消息之上）。
+    #[test]
+    fn runtime_context_inserted_right_before_last_user_message() {
+        let mut messages = vec![
+            serde_json::json!({"role": "user", "content": "第一句"}),
+            serde_json::json!({"role": "assistant", "content": "嗯"}),
+            serde_json::json!({"role": "user", "content": "最新一句"}),
+        ];
+        assert!(inject_runtime_context(&mut messages, "[当前时间] x"));
+        assert_eq!(messages.len(), 4, "{messages:?}");
+        assert_eq!(role_of(&messages[2]), "system", "{messages:?}");
+        assert_eq!(messages[3]["content"], serde_json::json!("最新一句"));
+        assert_eq!(messages[1]["content"], serde_json::json!("嗯"));
+    }
+
+    /// 无 user 消息时不做任何改动（保持既有行为，避免误伤）。
+    #[test]
+    fn runtime_context_skipped_without_user_message() {
+        let mut messages = vec![serde_json::json!({"role": "assistant", "content": "hi"})];
+        assert!(!inject_runtime_context(&mut messages, "[当前时间] x"));
+        assert_eq!(messages.len(), 1, "{messages:?}");
+    }
+
+    /// 空前缀不注入。
+    #[test]
+    fn runtime_context_skipped_for_blank_prefix() {
+        let mut messages = vec![serde_json::json!({"role": "user", "content": "在吗"})];
+        assert!(!inject_runtime_context(&mut messages, "   "));
+        assert_eq!(messages.len(), 1, "{messages:?}");
+    }
+
+    // ── P0：fail-closed 守判据 ──
+
+    #[test]
+    fn detect_unusable_user_turn_flags_blank_last_user_message() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "上一句"}),
+            serde_json::json!({"role": "assistant", "content": "嗯"}),
+            serde_json::json!({"role": "user", "content": "   "}),
+        ];
+        assert!(detect_unusable_user_turn(&messages).is_some(), "末尾 user 为空必须拦截");
+    }
+
+    #[test]
+    fn detect_unusable_user_turn_allows_normal_turn() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "在吗"}),
+        ];
+        assert!(detect_unusable_user_turn(&messages).is_none());
+    }
+
+    /// 完全历史（无 user 消息）不算命中：交由既有流程处理，不误伤纯指令型回合。
+    #[test]
+    fn detect_unusable_user_turn_ignores_history_without_user() {
+        assert!(detect_unusable_user_turn(&[]).is_none());
+        let only_assistant = vec![serde_json::json!({"role": "assistant", "content": "hi"})];
+        assert!(detect_unusable_user_turn(&only_assistant).is_none());
+    }
+
+    /// 守卫在回合入口生效：末尾 user 为空 → error 且**不发任何请求**。
+    #[test]
+    fn run_turn_fails_closed_when_user_message_is_empty() {
+        let (runner, gw, transport) = mock_gateway(vec![
+            r#"{"choices":[{"message":{"role":"assistant","content":"不该被调用"},"finish_reason":"stop"}]}"#,
+        ]);
+        let req = AgentTurnRequest {
+            group_id: None,
+            history_json: r#"[{"role":"user","content":"  "}]"#.to_string(),
+            tools: vec![],
+            max_rounds: 3,
+            tool_choice: String::new(),
+            sticker_probability: 0,
+            image: None,
+            system_prompt: None,
+            companion_name_map_json: None,
+        };
+        let result = runner.run_turn_inner(&req, Some(1), &gw, None, &NoopHost, &DefaultTurnStateMachine);
+        assert_eq!(result.finished_reason, "error", "{:?}", result);
+        assert!(result.error.is_some());
+        assert_eq!(result.events.len(), 0, "fail-closed 不应产生任何事件");
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            0,
+            "fail-closed 时不得发出任何上游请求"
+        );
     }
 }

@@ -117,6 +117,9 @@ internal fun List<ChatMessage>.toChatListItems(
             continue
         }
         if (message.content.isBlank() && message.type != MessageType.IMAGE) continue
+        // 工具调用卡片（TOOL_ACTIVITY）不再在对话页显示：过程可视化已关闭，
+        // 但消息仍正常落库、AI 上下文与统计逻辑不受影响（见 ChatRepository 的过滤）。
+        if (message.type == MessageType.TOOL_ACTIVITY) continue
 
         val previousTimestamp = previousVisibleTimestamp
         if (previousTimestamp == null || message.timestamp - previousTimestamp >= TIME_DIVIDER_INTERVAL_MILLIS) {
@@ -140,6 +143,8 @@ internal fun toChatListItems(
 
     for (messageMetadata in metadata) {
         if (messageMetadata.type == MessageType.REASONING && !showReasoning) continue
+        // 工具调用卡片（TOOL_ACTIVITY）不再在对话页显示。
+        if (messageMetadata.type == MessageType.TOOL_ACTIVITY) continue
         if (previousTimestamp == null || messageMetadata.timestamp - previousTimestamp >= TIME_DIVIDER_INTERVAL_MILLIS) {
             items += ChatListItem.TimeDivider(messageMetadata.timestamp)
         }

@@ -4,7 +4,7 @@
 // 系统提示词由 Rust 统一组装为单个完整 system prompt（每轮重建并替换 persona system）：
 // - L0 环境感知层·静态元数据：伴侣信息、群聊成员名映射（如有）、群主名（如有）、
 //   设备 ID、设备时区、会话 ID（稳定信息）
-// - L1 身份角色层：【角色设定】身份行 + 年龄/人设/说话风格/背景/补充设定/自定义指令
+// - L1 身份角色层：【角色扮演】指令 + 身份/年龄/性格/说话风格/背景/补充设定/自定义指令
 // - L2 安全层：软性注入说明（自然度优先，硬防护在代码层）
 // - L3 tools 层：逻辑层，tools 仅作为请求体参数注入，不在 system 文本重复
 // - L4 技能层：技能目录（渐进式披露 L1，仅 name+description）+【记忆技能】程序性 Skill
@@ -187,7 +187,7 @@ impl PromptOrchestrator {
             });
         }
 
-        // L1 身份角色层：【角色设定】区块（稳定信息）
+        // L1 身份角色层：【角色扮演】区块（稳定信息）
         if let Some(c) = companion.as_ref() {
             let persona_text = persona_block(c);
             if !persona_text.trim().is_empty() {
@@ -444,14 +444,17 @@ impl PromptOrchestrator {
 
 // ── L0 / L1 / 用户 L0 私有组装辅助 ──
 
-/// L0 环境感知层·静态元数据（伴侣/群聊成员/群主/设备/时区/会话）
-fn env_static_context(companion: Option<&CompanionProfile>, options: &PromptOrchestratorOptions) -> String {
-    let mut out = String::from("【环境信息】\n");
-    if let Some(c) = companion {
-        if !c.name.trim().is_empty() {
-            out.push_str(&format!("伴侣：{}\n", c.name.trim()));
-        }
-    }
+/// L0 环境感知层·静态元数据（**仅群聊场景**的成员/群主映射）。
+///
+/// ⚠️ 信息分层纪律（防「系统设定回显」泄漏）：这里只放模型真正需要、且**不含内部标识**的环境信息。
+/// - `device_id` / `session_id` / `timezone` **一律不进模型上下文**：它们是后端签名与本地时区
+///   换算用的内部元数据，对聊天模型零功能价值，却被真机实测原样吐成气泡（「设备ID：ly_…」）。
+///   时间感知已由 `[当前时间]`（本文件 `dynamic_env_context`）以自然语言承担，无需再传时区。
+/// - 伴侣名不再在此重复（L1 角色层已声明「你叫 X」），避免出现「伴侣：方唐婧」这类可被复读的键值对。
+///
+/// 结果为空（1:1 聊天、无群成员/群主）时返回空串，由调用方跳过本层——上下文里就不出现该区块。
+fn env_static_context(_companion: Option<&CompanionProfile>, options: &PromptOrchestratorOptions) -> String {
+    let mut lines: Vec<String> = Vec::new();
     if let Some(map_json) = &options.companion_name_map_json {
         if let Ok(map) = serde_json::from_str::<serde_json::Value>(map_json) {
             if let Some(obj) = map.as_object() {
@@ -466,44 +469,45 @@ fn env_static_context(companion: Option<&CompanionProfile>, options: &PromptOrch
                         .map(|(k, v)| format!("ID {k} = {v}"))
                         .collect::<Vec<_>>()
                         .join("、");
-                    out.push_str(&format!("群聊成员：{members}\n"));
+                    lines.push(format!("群聊成员：{members}"));
                 }
             }
         }
     }
     if let Some(owner) = &options.owner_name {
         if !owner.trim().is_empty() {
-            out.push_str(&format!("群主：{}\n", owner.trim()));
+            lines.push(format!("群主：{}", owner.trim()));
         }
     }
-    if !options.device_id.is_empty() {
-        out.push_str(&format!("设备ID：{}\n", options.device_id));
+    if lines.is_empty() {
+        return String::new();
     }
-    if !options.timezone.is_empty() {
-        out.push_str(&format!("设备时区：{}\n", options.timezone));
-    }
-    if let Some(sid) = &options.session_id {
-        if !sid.trim().is_empty() {
-            out.push_str(&format!("会话ID：{}\n", sid.trim()));
-        }
-    }
-    out.trim_end().to_string()
+    format!("【环境信息】\n{}", lines.join("\n"))
 }
 
-/// L1 身份角色层：【角色设定】区块（迁移自 native_gateway build_system_prompt）
+/// L1 身份角色层：【角色扮演】区块（迁移自 native_gateway build_system_prompt）。
+///
+/// ⚠️ 措辞纪律（防「系统设定回显」泄漏）：真机实测模型会把第三人称档案式字段
+/// （「你是方唐婧，一位女朋友…／年龄：／人设：」）**原文复述成自我介绍气泡**。
+/// 故改为「给演员的指令」口吻，并在开头显式禁止复述设定——把设定从「可被朗读的资料」
+/// 变成「只供内化的背景」。
 fn persona_block(c: &CompanionProfile) -> String {
-    let mut out = String::from("\n【角色设定】\n");
+    let mut out = String::from("\n【角色扮演】\n");
+    out.push_str(
+        "你正在扮演下面这个角色。请以第一人称自然地「成为」ta 与用户聊天——\
+以下设定只供你内化，绝不能在对话里复述、引用、介绍或朗读（包括名字、年龄、性格、背景等任何字段）。\n",
+    );
     out.push_str(&format!(
-        "你是{name}，一位{role}，正在与用户进行日常陪伴对话。\n",
+        "你叫「{name}」，是用户的{role}。\n",
         name = c.name,
         role = role_label(&c.role)
     ));
     if let Some(age) = c.age {
-        out.push_str(&format!("年龄：{}岁\n", age));
+        out.push_str(&format!("你今年 {age} 岁。\n"));
     }
     let personality = c.personality.trim();
     if !personality.is_empty() {
-        out.push_str(&format!("人设：{}\n", personality));
+        out.push_str(&format!("你的性格与设定：{personality}\n"));
     }
     if let Some(style) = c
         .speaking_style
@@ -511,7 +515,7 @@ fn persona_block(c: &CompanionProfile) -> String {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
-        out.push_str(&format!("说话风格：{}\n", style));
+        out.push_str(&format!("你说话的风格：{style}\n"));
     }
     if let Some(backstory) = c
         .backstory
@@ -519,7 +523,7 @@ fn persona_block(c: &CompanionProfile) -> String {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
-        out.push_str(&format!("背景：{}\n", backstory));
+        out.push_str(&format!("你的背景：{backstory}\n"));
     }
     if let Some(raw) = c
         .raw_prompt
@@ -1004,16 +1008,21 @@ mod tests {
         let frags = full.build_fragments(Some(profile()), Some(1), Some(9), String::new(), options);
         let env = frags.iter().find(|f| f.id == "env.static_meta").unwrap();
         assert_eq!(env.layer, 0);
-        assert!(env.content.contains("伴侣：小恋"), "{:?}", env.content);
+        // L0 只保留群聊所需的成员/群主映射；内部元数据与伴侣名一律不进模型上下文。
         assert!(env.content.contains("群主：群主小明"), "{:?}", env.content);
-        assert!(env.content.contains("设备ID：DEV-1234"), "{:?}", env.content);
-        assert!(env.content.contains("设备时区：Asia/Shanghai"), "{:?}", env.content);
-        assert!(env.content.contains("会话ID：sess-1"), "{:?}", env.content);
         assert!(env.content.contains("ID 1 = 小爱"), "{:?}", env.content);
+        assert!(!env.content.contains("设备ID"), "设备ID 不得进入模型上下文: {:?}", env.content);
+        assert!(!env.content.contains("DEV-1234"), "{:?}", env.content);
+        assert!(!env.content.contains("设备时区"), "{:?}", env.content);
+        assert!(!env.content.contains("Asia/Shanghai"), "{:?}", env.content);
+        assert!(!env.content.contains("会话ID"), "{:?}", env.content);
+        assert!(!env.content.contains("sess-1"), "{:?}", env.content);
+        assert!(!env.content.contains("伴侣："), "{:?}", env.content);
         let persona = frags.iter().find(|f| f.id == "persona.identity").unwrap();
         assert_eq!(persona.layer, 1);
-        assert!(persona.content.contains("你是小恋，一位女朋友"), "{:?}", persona.content);
-        assert!(persona.content.contains("年龄：20岁"), "{:?}", persona.content);
+        assert!(persona.content.contains("你叫「小恋」，是用户的女朋友"), "{:?}", persona.content);
+        assert!(persona.content.contains("你今年 20 岁"), "{:?}", persona.content);
+        assert!(persona.content.contains("你正在扮演"), "{:?}", persona.content);
         assert!(persona.content.contains("【自定义角色指令】"), "{:?}", persona.content);
         // 顺序：L0 在 L1 之前
         let env_idx = frags.iter().position(|f| f.id == "env.static_meta").unwrap();
@@ -1025,17 +1034,17 @@ mod tests {
     fn build_system_prompt_assembles_layers_in_order() {
         let (full, _) = orchestrator();
         let options = PromptOrchestratorOptions {
-            device_id: "DEV-1234".to_string(),
-            timezone: "Asia/Shanghai".to_string(),
+            owner_name: Some("群主小明".to_string()),
             ..Default::default()
         };
         let sys = full.build_system_prompt(Some(profile()), Some(1), None, "在吗".to_string(), options);
         let env_pos = sys.find("【环境信息】").expect("应含 L0");
-        let persona_pos = sys.find("【角色设定】").expect("应含 L1");
+        let persona_pos = sys.find("【角色扮演】").expect("应含 L1");
         let safety_pos = sys.find("注入说明").expect("应含 L2");
         assert!(env_pos < persona_pos, "L0 应先于 L1");
         assert!(persona_pos < safety_pos, "L1 应先于 L2");
-        assert!(sys.contains("你是小恋，一位女朋友"));
+        assert!(sys.contains("你叫「小恋」，是用户的女朋友"));
+        assert!(!sys.contains("设备ID"), "设备ID 不得进入 system prompt: {sys}");
         assert!(!sys.contains("用户刚说想喝奶茶"), "L5 不应含 WORKING 短期记忆");
         // L6/L7 已移除：不应再含输出协议等自定义层
         assert!(!sys.contains("输出协议"), "{sys}");

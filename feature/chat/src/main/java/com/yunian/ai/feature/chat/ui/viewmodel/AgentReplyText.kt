@@ -13,6 +13,10 @@ internal object AgentReplyText {
         // 被 emit_bubble 当气泡发出。此处是所有气泡（bubble 事件 + finalText 兜底 + vision 路径）
         // 必经的单点收口，统一剥离思考块后再走生图清洗。
         val thinkingStripped = ResponsePostProcessor.stripThinkingContent(raw)
+        // 编排域判据（单点收口）：这是全部气泡（bubble 事件 + finalText 兜底 + vision 路径）
+        // 的唯一必经点。命中即**整条丢弃**——这类文本是系统/工具层内容被模型复述
+        // （如「已经回复完了，表情包发送失败但气泡已经到位，等用户继续聊」），不是角色对用户说的话。
+        if (ResponsePostProcessor.looksLikeOrchestrationLeak(thinkingStripped)) return ""
         if (!imageGenEnabled) return thinkingStripped
         val stripped = ImageGenProtocol.sanitizeForDisplay(thinkingStripped)
         return when {

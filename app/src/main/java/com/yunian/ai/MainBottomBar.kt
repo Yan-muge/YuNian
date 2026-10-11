@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -77,8 +78,8 @@ fun FloatingGlassBottomNav(
     val unselectedContent = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF8A829A)
     val dividerColor = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFE0E0E0)
     val selectedBg = TabSelectedBackground
-    // 选中态文字用近黑，保证在 C2BEF0 浅底上可读（深色模式同样浅底浅字会糊，故文字恒深色）
-    val selectedContent = Color(0xFF191919)
+    // 选中态图标+文字用中饱和紫，与顶部 tab 选中文字同色
+    val selectedContent = Color(0xFF8E7CC3)
 
     var visualSelectedIndex by rememberSaveable { mutableIntStateOf(currentIndex) }
     var pendingNavigationIndex by remember { mutableStateOf<Int?>(null) }
@@ -113,12 +114,13 @@ fun FloatingGlassBottomNav(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(66.dp)
+                .height(60.dp)
                 .selectableGroup(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             items.forEachIndexed { index, item ->
                 val selected = index == visualSelectedIndex
+                // 纵向布局：图标在上、文字在下。选中态仅加淡紫背景胶囊，图标+文字保持同色染色。
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -132,45 +134,26 @@ fun FloatingGlassBottomNav(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    val iconColor = if (selected) selectedContent else unselectedContent
-                    val iconColorFilter = ColorFilter.tint(iconColor)
-                    Box(
+                    val tintColor = if (selected) selectedContent else unselectedContent
+                    val iconColorFilter = ColorFilter.tint(tintColor)
+                    // 无胶囊背景：选中 = 图标+文字统一染紫，未选中 = 灰
+                    Icon(
+                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                        contentDescription = item.title,
+                        tint = Color.Unspecified,
                         modifier = Modifier
-                            .padding(vertical = 2.dp)
-                            .clip(RoundedCornerShape(50))
-                            .then(
-                                if (selected) {
-                                    Modifier
-                                        .background(selectedBg)
-                                        .padding(horizontal = 14.dp, vertical = 3.dp)
-                                } else {
-                                    Modifier.padding(horizontal = 14.dp, vertical = 3.dp)
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                contentDescription = item.title,
-                                tint = Color.Unspecified,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .graphicsLayer(colorFilter = iconColorFilter)
-                            )
-                            Text(
-                                text = item.title,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                    fontSize = 13.sp
-                                ),
-                                color = iconColor
-                            )
-                        }
-                    }
+                            .size(22.dp)
+                            .graphicsLayer(colorFilter = iconColorFilter)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 11.sp
+                        ),
+                        color = tintColor
+                    )
                 }
             }
         }

@@ -86,6 +86,58 @@ class ResponsePostProcessorTest {
     }
 
     @Test
+    fun strip_actionPlanNarration_becomesBlank() {
+        // 行动计划旁白：模型把「接下来做什么/不做什么」的计划当正文输出，应整段剥离。
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("问完这句就等他了，不再发了"))
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("我先不回了，等他接话"))
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("这句话说完就停下，看他的反应"))
+    }
+
+    @Test
+    fun strip_actionPlanNarration_normalSpeech_notStripped() {
+        // 防误伤：真正对用户说的话，即使含「不再/就等」字样也不剥离。
+        assertEquals("你不再说话我就睡了哦", ResponsePostProcessor.stripThinkingContent("你不再说话我就睡了哦"))
+        assertEquals("宝宝，我等你回来", ResponsePostProcessor.stripThinkingContent("宝宝，我等你回来"))
+        assertEquals("别再问啦，我等你", ResponsePostProcessor.stripThinkingContent("别再问啦，我等你"))
+    }
+
+    @Test
+    fun strip_planReportNarration_becomesBlank() {
+        // 兜底判据（不依赖枚举词，抓「对白特征缺失 + 计划/汇报语气」）：
+        // 「已经回了上面那条了，等着他接话就行」这类汇报式旁白应剥离。
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("已经回了上面那条了，等着他接话就行"))
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("问完这句就等他了，不再发了"))
+        assertEquals("", ResponsePostProcessor.stripThinkingContent("我先不回了，等他接话"))
+    }
+
+    @Test
+    fun strip_planReportNarration_normalSpeech_notStripped() {
+        // 防误伤：正常对白即使含「好了/这就/先/不再」等日常语气词也不剥离。
+        assertEquals("好了，不说了，睡觉", ResponsePostProcessor.stripThinkingContent("好了，不说了，睡觉"))
+        assertEquals("等着，我这就来", ResponsePostProcessor.stripThinkingContent("等着，我这就来"))
+        assertEquals("已经回你啦", ResponsePostProcessor.stripThinkingContent("已经回你啦"))
+        assertEquals("我会想你的", ResponsePostProcessor.stripThinkingContent("我会想你的"))
+        assertEquals("第二句", ResponsePostProcessor.stripThinkingContent("第二句"))
+    }
+
+    @Test
+    fun strip_idleAckTail_becomesBlank() {
+        // 孤立语气词尾巴：模型说完一句对白后又补「嗯嗯」「嗯」「好呀」等空尾音，应剥离。
+        assertEquals("好呀，我这就去", ResponsePostProcessor.stripThinkingContent("好呀，我这就去\n\n嗯嗯"))
+        assertEquals("早点睡吧。", ResponsePostProcessor.stripThinkingContent("早点睡吧。嗯"))
+        assertEquals("好呀，知道了", ResponsePostProcessor.stripThinkingContent("好呀，知道了\n\n好呀"))
+    }
+
+    @Test
+    fun strip_idleAckTail_normalSpeech_notStripped() {
+        // 防误伤：整条就是「嗯嗯/好呀」这类真实回应（单独一条，无前置对白），应保留。
+        assertEquals("嗯嗯", ResponsePostProcessor.stripThinkingContent("嗯嗯"))
+        assertEquals("好呀", ResponsePostProcessor.stripThinkingContent("好呀"))
+        // 含实词的尾段不是空语气词，不剥离。
+        assertEquals("我想你呀", ResponsePostProcessor.stripThinkingContent("我想你呀"))
+    }
+
+    @Test
     fun looksLikeThinkingLeak_normalChat_false() {
         assertFalse(ResponsePostProcessor.looksLikeThinkingLeak("今晚想吃什么呀～"))
         assertNull(ResponsePostProcessor.extractThinkingContent("今晚想吃什么呀～").second)

@@ -66,6 +66,38 @@ object ResponsePostProcessor {
         "继续观察", "保持观察", "等待后续", "静待", "先不打扰",
     )
 
+    // ── 行动计划旁白标记 ──────────────────────────────────────────────
+    // 另一种思考泄漏：模型把「接下来要做什么/不做什么」的行动计划直接当正文输出，
+    // 例如「问完这句就等他了，不再发了」「我先不回了，等他接话」「这句话说完就停下」。
+    // 这类文本主语是「我」、谓语是「计划动作」，是跟自己交代，不是对用户说话。
+    // 与 META_NARRATION_MARKERS 的区别：前者评估「现状/氛围」，后者交代「下一步动作」。
+    private val ACTION_PLAN_MARKERS = listOf(
+        "不再发", "不再说", "不再问了", "先不回", "先不说", "不回了", "不说了",
+        "就等他了", "就等对方", "就等着", "等他就行", "等他接话", "等他开口",
+        "问完这句", "说完这句", "这句说完", "这句问完", "问完就", "说完就",
+        "先停一下", "先停在这", "停在这", "打住", "就此打住", "就到这", "先到这",
+        "我先观察", "我先看看他", "先看看他", "看他的反应", "看他怎么回",
+    )
+
+    // ── 对白特征兜底检测（不依赖枚举词，抓句式结构）──────────────────
+    // 正常对白几乎必然含至少一个「互动信号」（情感/亲昵/应和），旁白则没有。
+    private val INTERACTION_WORDS = listOf(
+        "想你", "抱抱", "亲亲", "乖", "晚安", "早安", "哈哈", "嘿嘿", "嗯嗯",
+        "喜欢", "爱你", "想你", "宝贝", "睡吧", "吃饭", "喝水", "累不累", "辛苦",
+    )
+    // 计划/汇报语气骨架：旁白（思考泄漏）常以这些词开头或包含它们，且无互动信号。
+    // 刻意收窄——只用「明确指向自我计划/汇报」的词，不含「好了/这就/先」这类日常语气词，
+    // 避免误伤「好了，不说了，睡觉」「等着，我这就来」等正常对白。
+    private val PLAN_TONE_PREFIXES = listOf(
+        "我已经回", "我先回", "我先不回", "已经回", "不再发", "不再说", "先不回",
+        "先不说", "等着他", "就等他", "接下来", "下一步",
+    )
+    private val PLAN_TONE_WORDS = listOf(
+        "就等他了", "就等着", "等着他", "等他接话", "等他回", "等对方", "不再发",
+        "不再说", "先不回", "先不说", "问完就", "说完就", "已经回", "回了上面",
+        "汇报", "计划", "打算", "下一步", "接下来",
+    )
+
     fun extractThinkingContent(content: String): Pair<String, String?> {
         if (content.isBlank()) return content to null
         val extracted = mutableListOf<String>()
@@ -107,7 +139,46 @@ object ResponsePostProcessor {
         return result.trim() to reasoning
     }
 
-    fun stripThinkingContent(content: String): String = extractThinkingContent(content).first
+    fun stripThinkingContent(content: String): String =
+        stripIdleAckTail(extractThinkingContent(content).first)
+
+    /**
+     * 剥离「孤立语气词尾巴」：模型在正经说完一句对白后，有时会再补一个无内容的附和尾音
+     * （如「嗯嗯」「嗯」「好呀」「知道了」）单独成句，造成多一条空泡。
+     * 这里把以换行/句号分隔后、末尾那一段若只是纯语气词，直接去掉。
+     * 刻意收窄：仅当尾段是「纯语气词 + 可选标点」，且不含任何实词时才剥离，避免误伤正常对白。
+     */
+    fun stripIdleAckTail(content: String): String {
+        if (content.isBlank()) return content
+        val parts = content
+            .split(Regex("""\n+|(?<=[。！？!?～…])"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (parts.size <= 1) return content.trim()
+        val tail = parts.last()
+        if (isPureIdleAck(tail)) {
+            val kept = parts.dropLast(1).joinToString("").trim()
+            return kept.ifBlank { content.trim() }
+        }
+        return content.trim()
+    }
+
+    private val IDLE_ACK_TOKENS = setOf(
+        "嗯嗯", "嗯", "嗯呐", "好", "好的", "好呀", "好吧", "好哦", "行", "行吧", "知道了",
+        "知道啦", "哦", "喔", "嗯呢", "好嘞", "是", "是的", "对", "对的", "没错",
+    )
+
+    private fun isPureIdleAck(text: String): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        // 去掉首尾的标点/波浪号后，剩余部分必须命中语气词表
+        val core = t.trim('，', ',', '。', '.', '！', '!', '？', '?', '～', '~', ' ')
+        if (core.isEmpty()) return false
+        // 若包含「你/我/宝宝/想/爱/抱/睡」等实词，说明是对白，不是空语气词
+        val hasContentWord = Regex("""[你您我他她宝宝亲爱老公老婆想爱抱睡来去在有没有]""").containsMatchIn(core)
+        if (hasContentWord) return false
+        return IDLE_ACK_TOKENS.contains(core)
+    }
 
     fun looksLikeThinkingLeak(text: String): Boolean {
         val t = text.trim()
@@ -119,6 +190,44 @@ object ResponsePostProcessor {
         val hit = COT_SENTENCE_MARKERS.count { t.contains(it) }
         if (hit >= 2) return true
         if (hit >= 1 && t.length > 80) return true
+        return false
+    }
+
+    // ── 编排域（内部机制）词汇 · 结构判据 ──────────────────────────────
+    // 「编排状态自述」泄漏（如「已经回复完了，表情包发送失败但气泡已经到位，等用户继续聊」）
+    // 的根治靠**治源**（工具结果/系统提示不再写成命令式台词，见 agent.rs）。此处是
+    // **唯一出海口**（AgentReplyText.forDisplay，覆盖全部气泡事件 + finalText 兜底）的结构兜底。
+    //
+    // 与 META_NARRATION_MARKERS 的本质区别：后者是「开放集短语枚举」——每换一种说法就得补一条；
+    // 这里是**编排域词汇**：引擎自身使用的封闭词集（气泡/回合/工具/发送状态…），
+    // 真人恋人对话里几乎不可能出现，因此可穷举、可控，属**领域划分**而非打地鼠。
+    private val ORCHESTRATION_STRONG_MARKERS = listOf(
+        "气泡", "回合", "工具调用", "调用工具", "工具结果", "系统提示", "系统控制", "系统设定",
+        "人设", "设备ID", "设备时区", "会话ID", "发送失败", "已输出", "回复完了", "等待用户",
+        "本轮", "上限", "表情包发送",
+    )
+    private val ORCHESTRATION_WEAK_MARKERS = listOf("表情包", "发送", "回复")
+
+    /**
+     * 判断气泡文本是否为「编排域内部文本」——系统/工具层内容被模型复述，而非角色对用户说的话。
+     *
+     * 命中规则（刻意收窄，避免误伤正常对白）：
+     * 1. 命中 ≥2 个编排域**强词** → 直接判为内部文本（真人对白几乎不可能同时出现两个）；
+     * 2. 命中 1 个强词 + 任意弱词，且**无对用户互动信号**（情感/亲昵词）→ 判为内部文本。
+     *
+     * 例：`已经回复完了，表情包发送失败但气泡已经到位，等用户继续聊。`
+     * → 命中 `回复完了` / `发送失败` / `气泡` 三个强词 → 判为内部文本。
+     * 反例：`给我发个表情包嘛`（仅弱词，无强词）→ 放行。
+     */
+    fun looksLikeOrchestrationLeak(text: String): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        val strongHits = ORCHESTRATION_STRONG_MARKERS.count { t.contains(it) }
+        if (strongHits >= 2) return true
+        if (strongHits >= 1) {
+            val weakHit = ORCHESTRATION_WEAK_MARKERS.any { t.contains(it) }
+            if (weakHit && INTERACTION_WORDS.none { t.contains(it) }) return true
+        }
         return false
     }
 
@@ -411,10 +520,10 @@ object ResponsePostProcessor {
         var result = text.trim()
         if (result.isEmpty()) return result
 
-        // 元叙述整段剥离（优先于前缀剥离）：命中「等待/氛围/状态评估」等旁观式描述时，
-        // 整段视为思考泄漏直接置空。命中条件刻意收窄——要求命中 ≥1 个强状态评估标记
-        // （「等他…」「氛围…」「状态稳定」等），且文本不含对用户的直接呼语/提问/语气词，
-        // 避免误伤「宝宝你状态怎么样呀」这类正常关心。
+        // 元叙述整段剥离（优先于前缀剥离）：命中「等待/氛围/状态评估」或「行动计划旁白」
+        // 等旁观式描述时，整段视为思考泄漏直接置空。命中条件刻意收窄——要求命中 ≥1 个
+        // 强评估/计划标记，且文本不含对用户的直接呼语/提问，避免误伤
+        // 「宝宝你状态怎么样呀」「你不再说话我就睡了哦」这类正常关心/对话。
         if (looksLikeMetaNarration(result)) {
             return ""
         }
@@ -466,13 +575,55 @@ object ResponsePostProcessor {
     private fun looksLikeMetaNarration(text: String): Boolean {
         val t = text.trim()
         if (t.isEmpty()) return false
-        val hit = META_NARRATION_MARKERS.count { t.contains(it) }
-        if (hit == 0) return false
         // 含第二人称呼语或疑问 → 是对用户说话，不是旁白，放行
         val directAddress = t.contains("你") || t.contains("您") ||
             t.contains("宝宝") || t.contains("亲爱的") || t.contains("老公") || t.contains("老婆")
         val asksQuestion = t.contains('？') || t.contains('?') ||
             t.endsWith("吗") || t.endsWith("呢") || t.endsWith("呀") || t.endsWith("吧")
-        return !directAddress && !asksQuestion
+
+        // ① 场景状态评估旁白（「等他继续聊」「目前氛围」「状态稳定」）
+        val metaHit = META_NARRATION_MARKERS.count { t.contains(it) }
+        if (metaHit > 0) return !directAddress && !asksQuestion
+
+        // ② 行动计划旁白（「问完这句就等他了，不再发了」「我先不回，等他接话」）：
+        //    命中行动计划标记，且是「我」对自己下一步的交代（含「我/先/就/不再」等
+        //    计划语气），且不是对用户提问 → 判为思考泄漏。
+        val actionHit = ACTION_PLAN_MARKERS.count { t.contains(it) }
+        if (actionHit > 0) {
+            val hasSelfPlanTone = t.contains("我") || t.contains("先") ||
+                t.contains("就") || t.contains("不再") || t.contains("不先")
+            return hasSelfPlanTone && !directAddress && !asksQuestion
+        }
+        // ③ 兜底：对白特征缺失 + 计划/汇报语气 → 判为旁白。
+        //    这是比①②更通用的判据——不依赖枚举词，而是抓「句式结构」：
+        //    旁白（思考泄漏）本质是「我」对自己状态/计划的短陈述，不含任何指向用户的
+        //    互动信号（第二人称/疑问/情感互动词）。而正常对白几乎必然含至少一个互动信号。
+        //    例：「已经回了上面那条了，等着他接话就行」「问完这句就等他了，不再发了」
+        //        「我先不回了，等他接话」——都命中。
+        if (isPlanOrReportNarration(t, directAddress, asksQuestion)) {
+            return true
+        }
+        return false
+    }
+
+    /** 计划/汇报式旁白：以自我或计划/汇报语气为骨架，且完全无对用户互动信号的短陈述。 */
+    private fun isPlanOrReportNarration(
+        text: String,
+        directAddress: Boolean,
+        asksQuestion: Boolean,
+    ): Boolean {
+        if (directAddress || asksQuestion) return false
+        val t = text.trim()
+        // 太长的文本通常是真实对白（旁白泄漏一般是一句短陈述），超过阈值不判旁白，防误伤。
+        if (t.length > 24) return false
+        // 含情感/互动词 → 是对用户表达，放行。
+        val hasInteraction = INTERACTION_WORDS.any { t.contains(it) }
+        if (hasInteraction) return false
+        // 计划/汇报语气骨架：以「我/先/就/已经/不再/不先/好了/行了/这就/等着」等词开头或包含，
+        // 且是「自我交代下一步/汇报已完成」的陈述（而非对用户的询问/回应）。
+        val planTone = PLAN_TONE_PREFIXES.any { t.startsWith(it) } ||
+            PLAN_TONE_WORDS.any { t.contains(it) }
+        return planTone
     }
 }
+

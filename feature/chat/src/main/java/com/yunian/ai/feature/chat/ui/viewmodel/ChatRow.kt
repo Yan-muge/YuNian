@@ -76,6 +76,11 @@ fun buildChatRows(
 
     for (messageMetadata in metadata) {
         if (messageMetadata.type == MessageType.REASONING && !showReasoning) continue
+        // 工具调用卡片（TOOL_ACTIVITY）不再在对话页显示：过程可视化已关闭。
+        // 与 ChatListItem.toChatListItems 的过滤保持一致 —— 若不在此处过滤，
+        // TOOL_ACTIVITY 消息会被当成普通消息行，落到 ChatRowRenderer 的
+        // `?: BodyLoading` 兜底，渲染成永久的「转圈 loading」（dima-need BUG1）。
+        if (messageMetadata.type == MessageType.TOOL_ACTIVITY) continue
 
         val previous = previousTimestamp
         if (previous == null || messageMetadata.timestamp - previous >= CHAT_ROW_TIME_DIVIDER_INTERVAL_MILLIS) {

@@ -153,7 +153,6 @@ fun ChatScreen(
         factory = ChatViewModelFactory(context.applicationContext as Application, companionId)
     )
     val confirmationRequest by viewModel.confirmationRequest.collectAsStateWithLifecycle()
-    val toolActivities by viewModel.toolActivity.collectAsStateWithLifecycle()
     val currentOnIntent by rememberUpdatedState(viewModel::handleIntent)
     val onIntent: (ChatIntent) -> Unit = remember { { intent -> currentOnIntent(intent) } }
     // 头像点击回调（T03 上提）：以稳定 lambda 一次性 provide（static local 值变化会令整棵子树重组，
@@ -327,15 +326,10 @@ fun ChatScreen(
         buildChatRows(messageMetadata, showReasoning = showReasoning)
     }
 
-    // 当前轮进行中的工具调用卡片：注入消息流最新位置，让过程实时可见；
-    // 轮次结束后由持久化的 TOOL_ACTIVITY 消息接管（见 ChatGenerationManager）。
-    val liveToolRow = remember(toolActivities) {
-        if (toolActivities.isEmpty()) {
-            null
-        } else {
-            ChatRow.LiveToolGroup(activities = toolActivities)
-        }
-    }
+    // 工具调用卡片（TOOL_ACTIVITY）已彻底隐藏（dima-need 任务1）：
+    // 实时态 LiveToolGroup 不再注入，持久态在 ChatListItem.kt 的 toChatListItems 已过滤。
+    // 此处保持恒 null，visibleRows 退化为纯 chatRows。
+    val liveToolRow: ChatRow.LiveToolGroup? = null
     val visibleRows = remember(chatRows, liveToolRow) {
         (if (liveToolRow != null) chatRows + liveToolRow else chatRows).asReversed()
     }
@@ -568,13 +562,6 @@ fun ChatScreen(
 
     LaunchedEffect(typingText) {
         if (typingText.isNotBlank() && wasAtBottom) {
-            listState.scrollToBottomIfNeeded()
-        }
-    }
-
-    // 工具调用卡片实时刷新时，若用户停在底部则跟随滚动，保证过程可见
-    LaunchedEffect(liveToolRow != null, toolActivities.size) {
-        if (liveToolRow != null && wasAtBottom) {
             listState.scrollToBottomIfNeeded()
         }
     }
