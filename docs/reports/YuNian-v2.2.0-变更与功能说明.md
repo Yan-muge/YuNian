@@ -175,7 +175,7 @@ chat.first_person_reasoning 通用 · 第一人称思考
 
 ## 四、世界书模板
 
-> 完整字段表见 **`docs/person-mulai-docs/世界书导入格式说明.md`**；可直接导入的样例见 `世界书导入模板.json` 与 `世界书-身世经营相识.json`。
+> 完整字段表、可直接复制的空白模板与完整示例（身世·经营·相识），全部合并见 **`docs/person-mulai-docs/世界书导入格式说明.md`**（该文档自包含，不再附单独的 `.json` 文件）。
 
 ### 4.1 关键：`entries` 必须是对象（map），不是数组
 
